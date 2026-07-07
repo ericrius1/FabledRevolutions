@@ -119,10 +119,11 @@ export class Hud {
     }
   }
 
+  /** Roster still on the field — downed agents count until culled from the scenario. */
   private updateEnemyCount(enemies: readonly Enemy[]): void {
     let left = 0;
     for (const enemy of enemies) {
-      if (!enemy.dead && !enemy.parked) left++;
+      if (!enemy.parked) left++;
     }
     if (left === this.shownEnemiesLeft) return;
     const previous = this.shownEnemiesLeft;
