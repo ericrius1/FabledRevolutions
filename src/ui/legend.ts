@@ -62,13 +62,21 @@ export class Legend {
     hotkeys.className = "legend-hotkeys";
     for (const { title, value } of HOTKEY_ROWS) {
       const row = document.createElement("div");
-      row.className = "row hotkey";
+      row.className =
+        title === "PANEL" ? "row hotkey panel-hint" : "row hotkey";
       const key = document.createElement("span");
       key.className = "key";
       key.textContent = title;
       const val = document.createElement("span");
       val.className = "val";
-      val.textContent = value;
+      if (title === "PANEL") {
+        const cap = document.createElement("kbd");
+        cap.className = "panel-keycap";
+        cap.textContent = value;
+        val.appendChild(cap);
+      } else {
+        val.textContent = value;
+      }
       row.append(key, val);
       hotkeys.appendChild(row);
     }

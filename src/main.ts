@@ -260,8 +260,7 @@ async function boot(): Promise<void> {
 
   let cameraMode = false
   let immersive = false
-  let panelHidden = true
-  document.body.classList.add("panel-hidden")
+  let panelHidden = false
 
   loadScenario(Panel.loadScenarioId())
 
