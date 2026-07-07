@@ -161,9 +161,12 @@ export class ImpactSmokeEffect extends BaseEffect {
 
     ctx.bus.on("dive-impact", ({ origin, power }) => {
       if (!this.enabled) return;
-      // Low, wide dust ring hugging the ground.
+      // Low, wide dust ring hugging the ground. Count grows sub-linearly with
+      // power: from the top-down camera every puff stacks over the same impact
+      // zone, so the linear ~50-puff mega ring was pure additive overdraw —
+      // the biggest GPU spike of the move — while ~30 read identically.
       this.burst(origin, {
-        count: Math.round(12 + 8 * power),
+        count: Math.round(12 + 8 * Math.sqrt(power)),
         power,
         radius: 1.1,
         outward: 3.2,
@@ -198,7 +201,9 @@ export class ImpactSmokeEffect extends BaseEffect {
     const radius = opts.radius ?? 0.9;
     const outward = (opts.outward ?? 2.2) * Math.sqrt(power);
     const upward = (opts.upward ?? 1.4) * Math.sqrt(power);
-    const size = (opts.size ?? 1.1) * (0.75 + power * 0.35) * smokeTuning.size;
+    // Size cap: fill cost is quad area × layer count, so past power 3 bigger
+    // puffs only multiply overdraw the flash already hides.
+    const size = (opts.size ?? 1.1) * (0.75 + Math.min(power, 3) * 0.35) * smokeTuning.size;
     const life = opts.life ?? 1.1;
 
     for (let n = 0; n < count; n++) {

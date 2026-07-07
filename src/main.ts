@@ -32,6 +32,7 @@ import {
   isWireframeEnabled,
   setWireframeEnabled
 } from "./core/wireframe"
+import { applySceneFog, fogTuning } from "./effects/fogGlow"
 import { Panel } from "./ui/panel"
 import { Hud } from "./ui/hud"
 import { Legend } from "./ui/legend"
@@ -80,7 +81,8 @@ async function boot(): Promise<void> {
   // the play space stays clear, and launched bodies spend seconds sliding
   // toward the band before dissolving into it.
   scene.background = new THREE.Color(0x1a1e1e)
-  scene.fog = new THREE.Fog(0x1a1e1e, 140, 360)
+  scene.fog = new THREE.Fog(0x1a1e1e, fogTuning.near, fogTuning.far)
+  applySceneFog(scene)
 
   const hemi = new THREE.HemisphereLight(0xbfc4cc, 0x30302f, 0.8)
   scene.add(hemi)
@@ -174,7 +176,9 @@ async function boot(): Promise<void> {
   const megaFx = effectManager.effects.find(
     (e): e is MegaFxEffect => e instanceof MegaFxEffect
   )
-  // Always-on green grade owns the base render path; mega/CRT flashes preempt it.
+  // The green grade is folded into the Mega FX chain (which renders every
+  // frame it's enabled); this standalone pipeline is the fallback base path
+  // for when Mega FX is toggled off.
   const matrixGrade = effectManager.effects.find(
     (e): e is MatrixGradeEffect => e instanceof MatrixGradeEffect
   )

@@ -1,6 +1,6 @@
 import * as THREE from "three/webgpu";
 import { float, mix, positionLocal, smoothstep, uniform } from "three/tsl";
-import { BaseEffect, type EffectGroup } from "./effect";
+import { BaseEffect, type EffectGroup, type EffectParam } from "./effect";
 import type { EffectContext } from "./effect";
 
 /**
@@ -19,17 +19,66 @@ import type { EffectContext } from "./effect";
  * color, which is what sells the "goes on forever" read.
  */
 
-// Must sit inside the camera far plane (500) and past the fog end (460) so the
-// dome is fully hazed-to-invisible geometry-wise and only its color reads.
-const DOME_RADIUS = 480;
+// Must sit inside the camera far plane (500) and past the fog end so the dome
+// is fully hazed-to-invisible geometry-wise and only its color reads.
+function domeRadius(): number {
+  return Math.max(480, fogTuning.far + 40);
+}
 
 // Base haze matches the scene background set in main.ts.
 const BASE_HORIZON = new THREE.Color(0x1a1e1e);
-// Zenith sits darker so the sky falls off overhead instead of reading as a wall.
-const ZENITH_SCALE = 0.45;
-// Fraction of the event glow that spills up into the zenith (lightning should
-// light the whole sky for a frame, not just the horizon band).
-const ZENITH_GLOW = 0.55;
+
+export const fogTuning = {
+  /** Linear fog begins at this distance from the camera. */
+  near: 140,
+  /** Linear fog is fully opaque by this distance. */
+  far: 360,
+  /** Zenith sits darker so the sky falls off overhead instead of reading as a wall. */
+  zenithScale: 0.45,
+  /** Fraction of the event glow that spills up into the zenith. */
+  zenithGlow: 0.55,
+};
+
+const TUNING_PREFIX = "fabled-revolutions.fog.";
+const TUNING_SCHEMA_KEY = `${TUNING_PREFIX}schema`;
+const TUNING_SCHEMA = "horizon-v1";
+for (const key of Object.keys(fogTuning) as Array<keyof typeof fogTuning>) {
+  try {
+    const schema = localStorage.getItem(TUNING_SCHEMA_KEY);
+    if (schema !== TUNING_SCHEMA) {
+      for (const staleKey of Object.keys(fogTuning)) {
+        localStorage.removeItem(TUNING_PREFIX + staleKey);
+      }
+      localStorage.setItem(TUNING_SCHEMA_KEY, TUNING_SCHEMA);
+      break;
+    }
+    const raw = localStorage.getItem(TUNING_PREFIX + key);
+    if (raw === null) continue;
+    const v = Number(raw);
+    if (Number.isFinite(v) && v >= 0) fogTuning[key] = v;
+  } catch {
+    // localStorage unavailable; keep defaults.
+  }
+}
+
+/** Apply live fog distances to the scene (works even when Horizon Fog is off). */
+export function applySceneFog(scene: THREE.Scene): void {
+  if (!scene.fog || !(scene.fog as THREE.Fog).isFog) return;
+  const fog = scene.fog as THREE.Fog;
+  fog.near = fogTuning.near;
+  fog.far = Math.max(fogTuning.near + 1, fogTuning.far);
+}
+
+export function setFogTuning(key: keyof typeof fogTuning, value: number): void {
+  fogTuning[key] = value;
+  if (key === "far") fogTuning.far = Math.max(fogTuning.near + 1, value);
+  if (key === "near") fogTuning.near = Math.min(value, fogTuning.far - 1);
+  try {
+    localStorage.setItem(TUNING_PREFIX + key, String(fogTuning[key]));
+  } catch {
+    // ignore
+  }
+}
 
 // Event pulse palette — reuses the tones the effects themselves flash with so
 // the horizon looks lit by them rather than doing its own thing.
@@ -48,12 +97,43 @@ interface Pulse {
 // Beyond ~this distance an event stops meaningfully lighting the horizon.
 const ATTEN_DIST = 70;
 
+/** Panel slider bound to one fogTuning field (persisted). */
+function fogParam(
+  key: string,
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  field: keyof typeof fogTuning,
+  onSet?: () => void,
+): EffectParam {
+  return {
+    key,
+    label,
+    min,
+    max,
+    step,
+    get: () => fogTuning[field],
+    set: (v: number) => {
+      setFogTuning(field, Math.min(max, Math.max(min, v)));
+      onSet?.();
+    },
+  };
+}
+
 export class FogGlowEffect extends BaseEffect {
   readonly id = "fog-glow";
   readonly label = "Horizon Fog";
   readonly description =
     "Gradient sky dome + fog haze that catches the light of lightning, mega blasts and dive impacts.";
   readonly group: EffectGroup = "Reaction";
+
+  readonly params: readonly EffectParam[] = [
+    fogParam("fog-near", "fog start", 40, 280, 5, "near", () => this.syncSceneFog()),
+    fogParam("fog-far", "fog end", 180, 490, 5, "far", () => this.syncSceneFog()),
+    fogParam("fog-zenith", "zenith dark", 0.1, 1, 0.05, "zenithScale"),
+    fogParam("fog-glow", "horizon glow", 0, 1.5, 0.05, "zenithGlow"),
+  ];
 
   private readonly pulses = {
     lightning: { color: LIGHTNING_COLOR, intensity: 0, tau: 0.12 } as Pulse,
@@ -62,8 +142,9 @@ export class FogGlowEffect extends BaseEffect {
   };
 
   private dome: THREE.Mesh | null = null;
+  private domeRadiusBuilt = 0;
   private readonly uHorizon = uniform(BASE_HORIZON.clone());
-  private readonly uZenith = uniform(BASE_HORIZON.clone().multiplyScalar(ZENITH_SCALE));
+  private readonly uZenith = uniform(BASE_HORIZON.clone().multiplyScalar(fogTuning.zenithScale));
 
   // Scratch — composed every frame, zero allocation.
   private readonly horizon = new THREE.Color();
@@ -72,6 +153,7 @@ export class FogGlowEffect extends BaseEffect {
 
   init(ctx: EffectContext): void {
     super.init(ctx);
+    this.syncSceneFog();
     ctx.bus.on("mega-lightning", ({ point }) => this.hit("lightning", 0.9, point));
     ctx.bus.on("mega-release", ({ origin }) => this.hit("mega", 0.65, origin));
     ctx.bus.on("dive-impact", ({ origin, power, mega }) =>
@@ -104,10 +186,10 @@ export class FogGlowEffect extends BaseEffect {
     }
 
     this.horizon.copy(BASE_HORIZON).add(this.glow);
-    this.zenith.copy(BASE_HORIZON).multiplyScalar(ZENITH_SCALE);
-    this.zenith.r += this.glow.r * ZENITH_GLOW;
-    this.zenith.g += this.glow.g * ZENITH_GLOW;
-    this.zenith.b += this.glow.b * ZENITH_GLOW;
+    this.zenith.copy(BASE_HORIZON).multiplyScalar(fogTuning.zenithScale);
+    this.zenith.r += this.glow.r * fogTuning.zenithGlow;
+    this.zenith.g += this.glow.g * fogTuning.zenithGlow;
+    this.zenith.b += this.glow.b * fogTuning.zenithGlow;
 
     const scene = this.ctx.scene;
     if (scene.fog) scene.fog.color.copy(this.horizon);
@@ -118,6 +200,23 @@ export class FogGlowEffect extends BaseEffect {
     // Dome rides the camera so its horizon band never parallaxes — the sky
     // reads as infinitely far even though it's a 480-unit sphere.
     if (this.dome) this.dome.position.copy(this.ctx.camera.camera.position);
+  }
+
+  private syncSceneFog(): void {
+    if (!this.ctx) return;
+    applySceneFog(this.ctx.scene);
+    const r = domeRadius();
+    if (this.dome && this.domeRadiusBuilt !== r) {
+      this.ctx.scene.remove(this.dome);
+      this.dome.geometry.dispose();
+      (this.dome.material as THREE.Material).dispose();
+      this.dome = null;
+      this.domeRadiusBuilt = 0;
+    }
+    if (this.enabled) {
+      if (!this.dome) this.dome = this.buildDome();
+      if (!this.dome.parent) this.ctx.scene.add(this.dome);
+    }
   }
 
   setEnabled(enabled: boolean): void {
@@ -136,6 +235,8 @@ export class FogGlowEffect extends BaseEffect {
   }
 
   private buildDome(): THREE.Mesh {
+    const radius = domeRadius();
+    this.domeRadiusBuilt = radius;
     const material = new THREE.MeshBasicNodeMaterial({
       side: THREE.BackSide,
       depthWrite: false,
@@ -146,10 +247,10 @@ export class FogGlowEffect extends BaseEffect {
     // Elevation 0..1 over the dome; the horizon color holds through a low band
     // (and everything below y=0) before easing into the zenith, so the fog
     // line lands on a constant-color region and can't show a seam.
-    const elevation = positionLocal.y.div(DOME_RADIUS).clamp(0, 1);
+    const elevation = positionLocal.y.div(radius).clamp(0, 1);
     material.colorNode = mix(this.uHorizon, this.uZenith, smoothstep(float(0.05), float(0.5), elevation));
 
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(DOME_RADIUS, 32, 16), material);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 16), material);
     // A camera-centered sphere always surrounds the frustum origin; culling
     // math can false-negative it, and it must never pop out.
     mesh.frustumCulled = false;

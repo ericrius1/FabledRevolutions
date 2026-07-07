@@ -14,6 +14,7 @@ import {
   pass,
 } from "three/tsl";
 import { BaseEffect, type EffectContext, type EffectGroup, type EffectParam } from "./effect";
+import { applyMatrixGrade } from "./matrixGrade";
 import { megaSlowMoTotal, megaTuning, setMegaTuning } from "../game/mega";
 import { smashSlowMoTotal } from "../game/diveSmash";
 import { floorTuning, setFloorTuning, setFloorDepth } from "../scenarios/arena";
@@ -300,6 +301,18 @@ export class MegaFxEffect extends BaseEffect {
         acc.addAssign(renderOutput(vec4(sceneTex.sample(tap).rgb, 1)).rgb);
       }
       c.assign(acc.div(9));
+
+      // Base look: the always-on Matrix grade, folded into this pass because
+      // this chain owns rendering whenever Mega FX is enabled — a separate
+      // grade pipeline would never get a frame. Weighted by the inverse of the
+      // mega envelopes so the charge/aftermath looks below preempt the grade,
+      // exactly as the old pipeline-switching path intended.
+      const megaLive = this.uCharge
+        .max(this.uGrade)
+        .max(this.uPulse)
+        .max(this.uFlash)
+        .clamp(0, 1);
+      c.assign(applyMatrixGrade(c, megaLive.oneMinus()));
 
       // Charge look: steel-blue energy with a small green lift. It still
       // gathers at the edges, but no longer takes exposure away from the scene.
