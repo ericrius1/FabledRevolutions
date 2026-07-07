@@ -1,0 +1,46 @@
+{
+  "hash": "d3aed454",
+  "configHash": "175375e5",
+  "lockfileHash": "dd0344db",
+  "browserHash": "144b6df2",
+  "optimized": {
+    "three": {
+      "src": "../../node_modules/three/build/three.module.js",
+      "file": "three.js",
+      "fileHash": "85e9a2a8",
+      "needsInterop": false
+    },
+    "box3d.js/inline": {
+      "src": "../../node_modules/box3d.js/dist/box3d.inline.mjs",
+      "file": "box3d__js_inline.js",
+      "fileHash": "0ded4e0a",
+      "needsInterop": false
+    },
+    "three/webgpu": {
+      "src": "../../node_modules/three/build/three.webgpu.js",
+      "file": "three_webgpu.js",
+      "fileHash": "0fd4cb50",
+      "needsInterop": false
+    },
+    "three/tsl": {
+      "src": "../../node_modules/three/build/three.tsl.js",
+      "file": "three_tsl.js",
+      "fileHash": "ac605afe",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-Y4R3TJ6Y": {
+      "file": "chunk-Y4R3TJ6Y.js"
+    },
+    "chunk-DRYLGOEL": {
+      "file": "chunk-DRYLGOEL.js"
+    },
+    "node_module-D4EJA35X": {
+      "file": "node_module-D4EJA35X.js"
+    },
+    "chunk-JVWSFFO4": {
+      "file": "chunk-JVWSFFO4.js"
+    }
+  }
+}

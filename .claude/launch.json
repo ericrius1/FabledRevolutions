@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fabled-revolutions-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--strictPort"],
+      "port": 5199,
+      "autoPort": true
+    }
+  ]
+}
