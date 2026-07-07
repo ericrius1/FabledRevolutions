@@ -1,5 +1,7 @@
 # Fabled Revolutions
 
+**[Play the deployed version →](https://fabled-revolutions.vercel.app/)**
+
 > A top-down melee combat sandbox where every "game juice" effect can be toggled
 > on and off independently — so you can *feel* exactly how much each one adds.
 
