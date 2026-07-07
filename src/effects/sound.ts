@@ -1,5 +1,29 @@
 import { BaseEffect, type EffectContext, type EffectGroup } from "./effect";
 
+const VOLUME_KEY = "fabled-revolutions.sfx-volume";
+/** Master bus level at 100% slider — individual voices are tuned against this. */
+const BASE_MASTER_GAIN = 0.35;
+const DEFAULT_VOLUME = 0.5;
+
+function loadVolume(): number {
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    if (raw == null) return DEFAULT_VOLUME;
+    const v = Number(raw);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : DEFAULT_VOLUME;
+  } catch {
+    return DEFAULT_VOLUME;
+  }
+}
+
+function saveVolume(value: number): void {
+  try {
+    localStorage.setItem(VOLUME_KEY, String(value));
+  } catch {
+    // localStorage unavailable; ignore.
+  }
+}
+
 /**
  * Procedural WebAudio SFX — no audio assets, everything is synthesized:
  *   - swing "whoosh": filtered noise burst that sweeps down (attack-start)
@@ -25,6 +49,8 @@ export class SoundEffect extends BaseEffect {
 
   private audio: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** 0..1 user volume; applied on top of BASE_MASTER_GAIN. */
+  private volume = loadVolume();
   private noiseBuffer: AudioBuffer | null = null;
   /** Wet bus: convolver reverb + feedback echo, fed per-sound via sendVerb(). */
   private verb: ConvolverNode | null = null;
@@ -145,6 +171,17 @@ export class SoundEffect extends BaseEffect {
     return this.audio?.state ?? "none";
   }
 
+  /** User SFX volume, 0..1 (default 0.5). */
+  getVolume(): number {
+    return this.volume;
+  }
+
+  setVolume(value: number): void {
+    this.volume = Math.min(1, Math.max(0, value));
+    saveVolume(this.volume);
+    this.applyMasterGain();
+  }
+
   /** Create (or resume) the AudioContext + shared noise buffer + wet bus. */
   private ensureAudio(): void {
     if (!this.audio) {
@@ -155,7 +192,7 @@ export class SoundEffect extends BaseEffect {
       if (!Ctor) return;
       this.audio = new Ctor();
       this.master = this.audio.createGain();
-      this.master.gain.value = 0.35;
+      this.applyMasterGain();
       // Master -> limiter -> speakers. Fast, aggressive limiting catches the
       // thunder transients so they read as LOUD, not clipped.
       this.limiter = this.audio.createDynamicsCompressor();
@@ -188,6 +225,11 @@ export class SoundEffect extends BaseEffect {
       feedback.connect(echoOut).connect(this.master);
     }
     if (this.audio.state === "suspended") void this.audio.resume();
+  }
+
+  private applyMasterGain(): void {
+    if (!this.master) return;
+    this.master.gain.value = BASE_MASTER_GAIN * this.volume;
   }
 
   /** Exponentially decaying stereo noise burst — a serviceable hall IR. */

@@ -38,6 +38,7 @@ import { Hud } from "./ui/hud"
 import { Legend } from "./ui/legend"
 import { InfoModal } from "./ui/infoModal"
 import { SocialLinks } from "./ui/socialLinks"
+import { SfxVolume } from "./ui/sfxVolume"
 
 const PLAYER_TOUCH_DAMAGE = 1
 const PLAYER_KNOCKBACK = 5
@@ -182,6 +183,9 @@ async function boot(): Promise<void> {
   const matrixGrade = effectManager.effects.find(
     (e): e is MatrixGradeEffect => e instanceof MatrixGradeEffect
   )
+  const soundFx = effectManager.effects.find(
+    (e): e is SoundEffect => e instanceof SoundEffect
+  )
 
   // ---- Scenario management ----
   let scenario: Scenario
@@ -221,6 +225,11 @@ async function boot(): Promise<void> {
   document.body.appendChild(panel.root)
   const legend = new Legend()
   document.body.appendChild(legend.root)
+
+  if (soundFx) {
+    const sfxVolume = new SfxVolume(soundFx)
+    document.body.appendChild(sfxVolume.root)
+  }
 
   // Info dossier: opening drops the world into deep slow-motion (a near-frozen
   // 0.05× crawl behind the reading panel) rather than a hard pause, and suspends

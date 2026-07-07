@@ -32,11 +32,50 @@ canvas {
   height: 100vh;
 }
 
+/* ---- SFX volume (bottom-left) ---- */
+.sfx-volume {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(168px, calc(100vw - 36px));
+  padding: 7px 10px;
+  background: rgba(28, 28, 32, 0.86);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  user-select: none;
+  z-index: 30;
+}
+
+.sfx-volume-label {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.sfx-volume-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.sfx-volume-value {
+  flex: 0 0 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
 /* ---- Controls legend (left) ---- */
 .legend {
   position: fixed;
   left: 18px;
-  bottom: 18px;
+  bottom: 58px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -105,6 +144,7 @@ body.panel-hidden .social-links {
 
 body.immersive .panel,
 body.immersive .legend,
+body.immersive .sfx-volume,
 body.immersive .social-links,
 body.immersive .info-button,
 body.immersive .hud-hearts,
@@ -120,10 +160,12 @@ body.immersive .pause-overlay {
   pointer-events: none;
 }
 
+/* Pause overlay disabled for now — re-enable when ready:
 body.paused .pause-overlay {
   visibility: visible;
   opacity: 1;
 }
+*/
 
 .pause-overlay {
   position: fixed;

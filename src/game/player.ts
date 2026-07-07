@@ -32,7 +32,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const PLAYER_MASK = Category.Enemy | Category.Ground | Category.Prop | Category.Ledge;
 
 /** Upward launch speed of a jump (m/s) — a big, floaty leap. */
-const JUMP_SPEED = 36;
+const JUMP_SPEED = 42;
 /** Fraction of the remaining ascent kept when the jump button is let go early.
  * Turns the fixed leap into a variable-height jump: a tap is a short hop, a
  * held press floats to the full apex. Cutting the climb (not zeroing it) keeps

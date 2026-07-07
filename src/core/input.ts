@@ -16,8 +16,8 @@ const FLASH_TIME = 0.16;
 const LOOK_DECAY = 0.12;
 /** Standard-mapping button index for jump (A). */
 const JUMP_BUTTON = 0;
-/** Standard-mapping button indices for sprint (LB / RB). */
-const SPRINT_BUTTONS = [4, 5];
+/** Standard-mapping button indices for sprint (LB / RB / LT). */
+const SPRINT_BUTTONS = [4, 5, 6];
 /** Standard-mapping button index for attack (RT). */
 const ATTACK_BUTTON = 7;
 
@@ -315,7 +315,7 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Shift / LB / RB) — triples ground move speed. */
+  /** True while sprint is held (Shift / LB / RB / LT) — triples ground move speed. */
   get sprintHeld(): boolean {
     return (
       this.keys.has("ShiftLeft") ||
