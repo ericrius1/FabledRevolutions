@@ -251,6 +251,8 @@ async function boot(): Promise<void> {
 
   let cameraMode = false
   let immersive = false
+  let panelHidden = true
+  document.body.classList.add("panel-hidden")
 
   loadScenario(Panel.loadScenarioId())
 
@@ -323,6 +325,10 @@ async function boot(): Promise<void> {
     if (input.consumeImmersiveToggle() && !infoModal.isOpen) {
       immersive = !immersive
       document.body.classList.toggle("immersive", immersive)
+    }
+    if (input.consumePanelToggle()) {
+      panelHidden = !panelHidden
+      document.body.classList.toggle("panel-hidden", panelHidden)
     }
 
     legend.update(input.activeSource, input.activity(), cameraMode)
@@ -405,7 +411,7 @@ async function boot(): Promise<void> {
     // Footer readout at ~4 Hz — writing DOM text every frame invalidates
     // layout for no visible benefit.
     statsTimer -= unscaledDt
-    if (statsTimer <= 0 && !immersive) {
+    if (statsTimer <= 0 && !immersive && !panelHidden) {
       statsTimer = 0.25
       bodyCount = physics.bodyCount
       panel.setStats(fps, bodyCount)

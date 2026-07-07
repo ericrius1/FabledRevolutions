@@ -16,10 +16,10 @@ const FLASH_TIME = 0.16;
 const LOOK_DECAY = 0.12;
 /** Standard-mapping button index for jump (A). */
 const JUMP_BUTTON = 0;
-/** Standard-mapping button index for sprint (LB). */
-const SPRINT_BUTTON = 4;
-/** Standard-mapping button indices we treat as "attack". */
-const ATTACK_BUTTONS = [5, 7]; // RB / RT
+/** Standard-mapping button indices for sprint (LB / RB). */
+const SPRINT_BUTTONS = [4, 5];
+/** Standard-mapping button index for attack (RT). */
+const ATTACK_BUTTON = 7;
 
 /**
  * Keyboard + pointer + gamepad state. Movement is polled each frame; aim comes
@@ -32,10 +32,11 @@ export class Input {
   private pointerNdc = new THREE.Vector2(0, 0);
   private attackQueued = false;
   private releaseQueued = false;
-  /** Rising-edge toggles for mode hotkeys (C / P / I). */
+  /** Rising-edge toggles for mode hotkeys (C / P / I / /). */
   private cameraToggleQueued = false;
   private pauseToggleQueued = false;
   private immersiveToggleQueued = false;
+  private panelToggleQueued = false;
   /** When false, pointer / pad attacks are ignored (camera-control mode). */
   private gameplayEnabled = true;
   /** Rising-edge latch for jump (Space / A) — one jump per press. */
@@ -80,6 +81,7 @@ export class Input {
       if (e.code === "KeyC") this.cameraToggleQueued = true;
       if (e.code === "KeyP") this.pauseToggleQueued = true;
       if (e.code === "KeyI") this.immersiveToggleQueued = true;
+      if (e.code === "Slash") this.panelToggleQueued = true;
     }
     // Rising edge only: the OS repeats keydown while Space is held, but a jump
     // fires once per physical press. Guard on the key not already being down.
@@ -156,8 +158,8 @@ export class Input {
     this.ry = deadzone(pad.axes[3] ?? 0);
 
     const jumpDown = pad.buttons[JUMP_BUTTON]?.pressed ?? false;
-    const attackDown = ATTACK_BUTTONS.some((i) => pad.buttons[i]?.pressed);
-    this.sprintPadHeld = pad.buttons[SPRINT_BUTTON]?.pressed ?? false;
+    const attackDown = pad.buttons[ATTACK_BUTTON]?.pressed ?? false;
+    this.sprintPadHeld = SPRINT_BUTTONS.some((i) => pad.buttons[i]?.pressed);
     const anyActivity =
       this.lx !== 0 ||
       this.ly !== 0 ||
@@ -269,6 +271,12 @@ export class Input {
     return true;
   }
 
+  consumePanelToggle(): boolean {
+    if (!this.panelToggleQueued) return false;
+    this.panelToggleQueued = false;
+    return true;
+  }
+
   /** Returns true once per queued attack; resets the flag. */
   consumeAttack(): boolean {
     if (!this.gameplayEnabled || !this.attackQueued) return false;
@@ -307,7 +315,7 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Shift / LB) — doubles ground move speed. */
+  /** True while sprint is held (Shift / LB / RB) — triples ground move speed. */
   get sprintHeld(): boolean {
     return (
       this.keys.has("ShiftLeft") ||

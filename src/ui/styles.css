@@ -94,6 +94,15 @@ canvas {
 }
 
 /* ---- Immersive + pause overlays ---- */
+body.panel-hidden .panel {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.panel-hidden .social-links {
+  right: 18px;
+}
+
 body.immersive .panel,
 body.immersive .legend,
 body.immersive .social-links,
@@ -102,7 +111,7 @@ body.immersive .hud-hearts,
 body.immersive .enemy-bars,
 body.immersive .kill-meter,
 body.immersive .enemy-count,
-body.immersive .charge-ring,
+body.immersive .charge-ring-wrap,
 body.immersive .vignette,
 body.immersive .horde-control,
 body.immersive .wave-overlay,
@@ -1095,9 +1104,19 @@ body.paused .pause-overlay {
 }
 
 /* ---- Sword charge ring (screen-space, pinned to the player) ---- */
-.charge-ring {
+.charge-ring-wrap {
   position: fixed;
+  left: 0;
+  top: 0;
   display: none;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.charge-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 72px;
   height: 72px;
   border-radius: 50%;

@@ -33,7 +33,9 @@ export class Hud {
   private readonly enemyLeftEl: HTMLSpanElement;
   private shownEnemiesLeft = -1;
 
-  // Charge ring (tracks the player while charging).
+  // Charge ring (tracks the player while charging). Position lives on the wrap
+  // so the inner ring can scale-animate without fighting translate3d.
+  private readonly chargeRingWrapEl: HTMLDivElement;
   private readonly chargeRingEl: HTMLDivElement;
 
   constructor(parent: HTMLElement, maxHearts: number) {
@@ -91,9 +93,12 @@ export class Hud {
     this.enemyCountEl.append(enemyTitle, this.enemyLeftEl);
     parent.appendChild(this.enemyCountEl);
 
+    this.chargeRingWrapEl = document.createElement("div");
+    this.chargeRingWrapEl.className = "charge-ring-wrap";
     this.chargeRingEl = document.createElement("div");
     this.chargeRingEl.className = "charge-ring";
-    parent.appendChild(this.chargeRingEl);
+    this.chargeRingWrapEl.appendChild(this.chargeRingEl);
+    parent.appendChild(this.chargeRingWrapEl);
   }
 
   /** Kill meter + mega status. Cheap DOM writes only on change. */
@@ -135,9 +140,10 @@ export class Hud {
     width: number,
     height: number,
   ): void {
+    const wrap = this.chargeRingWrapEl;
     const el = this.chargeRingEl;
     if (!combat.charging) {
-      if (el.style.display !== "none") el.style.display = "none";
+      if (wrap.style.display !== "none") wrap.style.display = "none";
       return;
     }
     this.projected.copy(player.position);
@@ -145,9 +151,8 @@ export class Hud {
     this.projected.project(camera);
     const sx = (this.projected.x * 0.5 + 0.5) * width;
     const sy = (-this.projected.y * 0.5 + 0.5) * height;
-    el.style.display = "block";
-    el.style.left = `${sx}px`;
-    el.style.top = `${sy}px`;
+    wrap.style.display = "block";
+    wrap.style.transform = `translate3d(${sx}px, ${sy}px, 0)`;
 
     const c = combat.chargeLevel;
     const base = Math.min(c, 1) * 360;
@@ -229,6 +234,10 @@ export class Hud {
     combat: Combat,
     mega: MegaSystem,
   ): void {
+    // Project with this frame's view — matrixWorld is normally refreshed during
+    // render, which runs after the HUD, so a fast follow cam leaves overlays
+    // one frame behind the canvas (visible ghosting when moving or jumping).
+    camera.updateMatrixWorld();
     this.updateHearts(player);
     this.updateEnemyBars(enemies, camera, width, height);
     this.updateEnemyCount(enemies);

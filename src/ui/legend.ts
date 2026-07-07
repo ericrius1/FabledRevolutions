@@ -27,6 +27,7 @@ const HOTKEY_ROWS: { title: string; value: string }[] = [
   { title: "CAMERA", value: "C · ORBIT · DOLLY · PAN" },
   { title: "PAUSE", value: "P" },
   { title: "IMMERSIVE", value: "I" },
+  { title: "PANEL", value: "/" },
 ];
 
 /**

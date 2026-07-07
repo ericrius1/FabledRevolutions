@@ -10,7 +10,7 @@ const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.5;
 const MOVE_SPEED = 7;
 /** Ground move speed multiplier while sprint is held. */
-const SPRINT_MULT = 2;
+const SPRINT_MULT = 3;
 /** How fast the body eases toward its heading (exponential smoothing rate, 1/s). */
 const TURN_RATE = 10;
 /** How fast the sword aim chases the cursor angle — snappier than the body. */
