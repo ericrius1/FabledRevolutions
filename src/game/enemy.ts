@@ -767,9 +767,20 @@ export class Enemy {
   private setBullet(on: boolean): void {
     if (this.bulletOn === on) return
     if (on && Enemy.bulletCount >= MAX_CONCURRENT_BULLETS) return
-    Enemy.bulletCount += on ? 1 : -1
+    if (!on) {
+      this.body.setBullet(false)
+      this.releaseBulletBudget()
+      return
+    }
+    Enemy.bulletCount++
     this.bulletOn = on
     this.body.setBullet(on)
+  }
+
+  private releaseBulletBudget(): void {
+    if (!this.bulletOn) return
+    Enemy.bulletCount = Math.max(0, Enemy.bulletCount - 1)
+    this.bulletOn = false
   }
 
   /**
@@ -952,7 +963,8 @@ export class Enemy {
   dispose(): void {
     // Return this body's CCD slot to the global budget — scenario switches
     // dispose enemies mid-flight, and a leaked count would starve future launches.
-    this.setBullet(false)
+    if (this.body.isDestroyed) this.releaseBulletBudget()
+    else this.setBullet(false)
     this.batchedVisual?.dispose()
     this.material?.dispose()
   }

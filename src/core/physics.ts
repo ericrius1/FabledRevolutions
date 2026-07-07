@@ -56,10 +56,16 @@ export interface BoxOptions {
 
 /** Handle to one physics body, wrapping the opaque b3BodyId. */
 export class Body {
+  private destroyed = false;
+
   constructor(
     private readonly b3: Box3DModule,
     readonly id: b3BodyId,
   ) {}
+
+  get isDestroyed(): boolean {
+    return this.destroyed;
+  }
 
   getPosition(out: { x: number; y: number; z: number }): void {
     const p = this.b3.b3Body_GetPosition(this.id);
@@ -200,6 +206,8 @@ export class Body {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.b3.b3DestroyBody(this.id);
   }
 }

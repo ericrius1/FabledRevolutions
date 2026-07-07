@@ -730,8 +730,8 @@ export class RevolutionsScenario implements Scenario {
       this.eliminatedTotal++
       this.liveEnemies.splice(i, 1)
       this.ctx.scene.remove(enemy.group)
-      this.ctx.physics.removeBody(enemy.body)
       enemy.dispose()
+      this.ctx.physics.removeBody(enemy.body)
       this.activePressers.delete(enemy)
       this.arrivals.delete(enemy)
       this.impactCooldown.delete(enemy.id)
@@ -1063,8 +1063,8 @@ export class RevolutionsScenario implements Scenario {
     if (this.rebuildTimer !== null) clearTimeout(this.rebuildTimer)
     for (const enemy of this.liveEnemies) {
       this.ctx.scene.remove(enemy.group)
-      this.ctx.physics.removeBody(enemy.body)
       enemy.dispose()
+      this.ctx.physics.removeBody(enemy.body)
     }
     this.liveEnemies.length = 0
     this.arrivals.clear()

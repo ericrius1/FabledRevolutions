@@ -89,8 +89,8 @@ export class MegaHordeScenario implements Scenario {
   dispose(): void {
     for (const enemy of this.liveEnemies) {
       this.ctx.scene.remove(enemy.group);
-      this.ctx.physics.removeBody(enemy.body);
       enemy.dispose();
+      this.ctx.physics.removeBody(enemy.body);
     }
     this.liveEnemies.length = 0;
     this.control.remove();
