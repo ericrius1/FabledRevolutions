@@ -27,6 +27,8 @@ import {
 
 const DEFAULT_TARGET = 500
 const MIN_TARGET = 12
+/** Must stay ≤ ENEMY_BATCH_CAPACITY (enemy.ts): the shared BatchedMesh
+ * buckets are sized to it and cannot grow after the first enemy spawns. */
 const MAX_TARGET = 1000
 /** Base stream rate (agents/sec); scaled by the fly-in speed knob. */
 const SPAWN_RATE = 60
@@ -205,6 +207,7 @@ export class RevolutionsScenario implements Scenario {
   private readonly ledgeBodies: Body[] = []
   private readonly activePressers = new Set<Enemy>()
   private readonly velScratch = { x: 0, y: 0, z: 0 }
+  private readonly arrivalImpactPoint = new THREE.Vector3()
   /** Geometries owned by the balcony build (deck, rail bar, posts) — disposed on rebuild. */
   private ledgeGeometries: THREE.BufferGeometry[] = []
   private ledgeMaterial: THREE.MeshStandardNodeMaterial | null = null
@@ -977,6 +980,12 @@ export class RevolutionsScenario implements Scenario {
 
   private updateArrivals(dt: number): void {
     if (this.arrivals.size === 0) return
+    let landingCount = 0
+    let landingX = 0
+    let landingY = 0
+    let landingZ = 0
+    let maxDropHeight = 0
+
     for (const [enemy, arrival] of this.arrivals) {
       // `launched`: knocked loose mid-arrival (shock front, billiard, hit).
       // Abandon the staged entrance entirely — re-locking it every frame here
@@ -1006,7 +1015,26 @@ export class RevolutionsScenario implements Scenario {
         enemy.setPresentationYOffset(arrival.targetY)
         enemy.setMovementLocked(arrival.holdAfter)
         this.arrivals.delete(enemy)
+        landingCount++
+        landingX += enemy.position.x
+        landingY += arrival.targetY
+        landingZ += enemy.position.z
+        maxDropHeight = Math.max(maxDropHeight, arrival.startY - arrival.targetY)
       }
+    }
+
+    if (landingCount > 0) {
+      const inv = 1 / landingCount
+      this.arrivalImpactPoint.set(
+        landingX * inv,
+        landingY * inv,
+        landingZ * inv
+      )
+      this.ctx.bus.emit("enemy-arrival-impact", {
+        point: this.arrivalImpactPoint,
+        count: landingCount,
+        dropHeight: maxDropHeight
+      })
     }
   }
 

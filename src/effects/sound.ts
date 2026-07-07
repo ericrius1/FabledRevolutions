@@ -11,6 +11,7 @@ import { BaseEffect, type EffectContext, type EffectGroup } from "./effect";
  *                     generated convolver reverb and a feedback echo
  *   - thunder:        crackling discharge + rolling low thunder per lightning
  *                     strike (aftermath)
+ *   - agent landings: grouped concrete crash when fly-in ranks slam down
  *
  * Browsers block audio until a user gesture, so the AudioContext is created
  * lazily on the first pointer/key event and resumed if suspended. When disabled
@@ -19,7 +20,7 @@ import { BaseEffect, type EffectContext, type EffectGroup } from "./effect";
 export class SoundEffect extends BaseEffect {
   readonly id = "sound";
   readonly label = "Sound";
-  readonly description = "Procedural WebAudio SFX: swings, hits, charge hum, mega blast.";
+  readonly description = "Procedural WebAudio SFX: swings, hits, charge hum, mega blast, arrival crashes.";
   readonly group: EffectGroup = "Audio";
 
   private audio: AudioContext | null = null;
@@ -54,6 +55,7 @@ export class SoundEffect extends BaseEffect {
   private lastBoom = -1;
   private lastChargedHitBoom = -1;
   private lastMegaBoom = -1;
+  private lastArrivalCrash = -1;
   private lastThunderRoll = -1;
   private lastThunderClap = -1;
 
@@ -91,6 +93,9 @@ export class SoundEffect extends BaseEffect {
     // The ground smash lands the same deep mega boom on top of its dive impact.
     ctx.bus.on("mega-smash", () => this.enabled && this.megaBlast());
     ctx.bus.on("mega-lightning", () => this.enabled && this.thunder());
+    ctx.bus.on("enemy-arrival-impact", ({ count, dropHeight }) => {
+      if (this.enabled) this.arrivalCrash(count, dropHeight);
+    });
   }
 
   update(_unscaledDt: number): void {
@@ -815,6 +820,99 @@ export class SoundEffect extends BaseEffect {
     this.sendVerb(washGain, 1.0);
     wash.start(t);
     wash.stop(t + 0.95 * stretch);
+  }
+
+  /**
+   * Revolutions fly-in landing: a row of agents finishing their staged fall
+   * becomes one scalable concrete crash instead of hundreds of stacked voices.
+   */
+  private arrivalCrash(count: number, dropHeight: number): void {
+    if (!this.audio || !this.master || !this.noiseBuffer) return;
+    const t = this.now();
+    const r = this.timeRate();
+    const stretch = 1 / Math.max(0.65, r);
+    if (t - this.lastArrivalCrash < 0.045 * stretch) return;
+    this.lastArrivalCrash = t;
+
+    const crowd = Math.min(1.8, Math.max(0.45, Math.sqrt(count) * 0.34));
+    const height = Math.min(1.35, Math.max(0.65, dropHeight / 58));
+    const force = crowd * height;
+    const pitchRate = 0.75 + 0.25 * r;
+
+    // Chest hit: a short stacked sub drop, louder and longer when a whole rank
+    // lands together.
+    const sub = this.audio.createOscillator();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime((88 + force * 10) * pitchRate, t);
+    sub.frequency.exponentialRampToValueAtTime(Math.max(18, 27 * pitchRate), t + 0.42 * stretch);
+    const subGain = this.audio.createGain();
+    subGain.gain.setValueAtTime(0.0001, t);
+    subGain.gain.exponentialRampToValueAtTime(0.75 + force * 0.52, t + 0.01 * stretch);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + (0.58 + force * 0.12) * stretch);
+    sub.connect(subGain).connect(this.master);
+    this.sendVerb(subGain, 0.72);
+    sub.start(t);
+    sub.stop(t + (0.66 + force * 0.12) * stretch);
+
+    // Front-edge slab break: broad, crunchy, and very fast so it reads as
+    // bodies smashing into pavement rather than only a bass boom.
+    const crack = this.audio.createBufferSource();
+    crack.buffer = this.noiseBuffer;
+    crack.playbackRate.value = (1.05 + Math.random() * 0.35) * r;
+    const crackTone = this.audio.createBiquadFilter();
+    crackTone.type = "bandpass";
+    crackTone.frequency.value = (720 + force * 360 + Math.random() * 260) * pitchRate;
+    crackTone.Q.value = 0.75;
+    const crackGain = this.audio.createGain();
+    crackGain.gain.setValueAtTime(0.0001, t);
+    crackGain.gain.exponentialRampToValueAtTime(0.95 + force * 0.38, t + 0.004 * stretch);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.13 * stretch);
+    crack.connect(crackTone).connect(crackGain).connect(this.master);
+    this.sendVerb(crackGain, 0.85);
+    crack.start(t);
+    crack.stop(t + 0.16 * stretch);
+
+    // Dust/debris wash that rolls off after the slam.
+    const debris = this.audio.createBufferSource();
+    debris.buffer = this.noiseBuffer;
+    debris.loop = true;
+    debris.playbackRate.value = 0.34 * pitchRate;
+    const debrisTone = this.audio.createBiquadFilter();
+    debrisTone.type = "lowpass";
+    debrisTone.frequency.setValueAtTime((1050 + force * 240) * pitchRate, t);
+    debrisTone.frequency.exponentialRampToValueAtTime(115 * pitchRate, t + (0.55 + force * 0.16) * stretch);
+    debrisTone.Q.value = 1.1;
+    const debrisGain = this.audio.createGain();
+    debrisGain.gain.setValueAtTime(0.0001, t);
+    debrisGain.gain.exponentialRampToValueAtTime(0.32 + force * 0.18, t + 0.045 * stretch);
+    debrisGain.gain.exponentialRampToValueAtTime(0.001, t + (0.72 + force * 0.18) * stretch);
+    debris.connect(debrisTone).connect(debrisGain).connect(this.master);
+    this.sendVerb(debrisGain, 1.05);
+    debris.start(t);
+    debris.stop(t + (0.82 + force * 0.2) * stretch);
+
+    // A few offset gravel/body hits inside the same crash sell the crowd count
+    // without creating one audio graph per enemy.
+    const clacks = Math.min(7, 2 + Math.floor(count / 3));
+    for (let i = 0; i < clacks; i++) {
+      const at = t + (0.012 + Math.random() * 0.13) * stretch;
+      const shard = this.audio.createBufferSource();
+      shard.buffer = this.noiseBuffer;
+      shard.playbackRate.value = (0.8 + Math.random() * 1.0) * r;
+      const shardTone = this.audio.createBiquadFilter();
+      shardTone.type = "bandpass";
+      shardTone.frequency.value = (650 + Math.random() * 2200) * pitchRate;
+      shardTone.Q.value = 2.4 + Math.random() * 2.8;
+      const shardGain = this.audio.createGain();
+      const peak = (0.11 + Math.random() * 0.16) * Math.min(1.25, force);
+      shardGain.gain.setValueAtTime(0.0001, at);
+      shardGain.gain.exponentialRampToValueAtTime(peak, at + 0.003 * stretch);
+      shardGain.gain.exponentialRampToValueAtTime(0.001, at + (0.035 + Math.random() * 0.055) * stretch);
+      shard.connect(shardTone).connect(shardGain).connect(this.master);
+      this.sendVerb(shardGain, 0.55);
+      shard.start(at);
+      shard.stop(at + 0.12 * stretch);
+    }
   }
 
   /** Lightning discharge plus rolling thunder, wet with reverb and echo. */

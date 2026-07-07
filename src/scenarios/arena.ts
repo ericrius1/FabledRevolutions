@@ -18,7 +18,7 @@ import type { Scenario, ScenarioContext } from "./scenario";
 import { Enemy } from "../game/enemy";
 import { PropField } from "../game/props";
 import { Category, type Body } from "../core/physics";
-import { groundShockHeight } from "../effects/groundShockwave";
+import { groundShockHeight, groundShockHeightSmooth } from "../effects/groundShockwave";
 
 export const ARENA_HALF = 44;
 /**
@@ -34,8 +34,15 @@ export const FLOOR_HALF = 440;
  * cheap outer apron (a ShapeGeometry with a matching hole) running to the fog
  * line, where the wave can never reach.
  */
-const FLOOR_DETAIL_HALF = 224;
-const FLOOR_DETAIL_SEGMENTS = 448;
+/**
+ * Sized to the farthest a shock crest can actually reach: an impact at the
+ * arena edge (ARENA_HALF 44) plus the smash radius cap (62) ≈ 106, with
+ * margin. At ~0.75 verts/m the 3.2–4.6 m crest still crosses 2–3 vertices;
+ * the old 224-half/1-vert-per-m plane was ~200k verts (~5× this one) running
+ * the shock displacement for ground the wave could never touch.
+ */
+const FLOOR_DETAIL_HALF = 128;
+const FLOOR_DETAIL_SEGMENTS = 192;
 
 /**
  * Floor look: Matrix-wet blacktop. A cold, nearly black road skin carries fine
@@ -182,29 +189,26 @@ export function buildArenaEnvironment(
 
   // Crack mask (1 inside a crack): the zero-crossings of a low-frequency field.
   // Drives both the surface relief and the subsurface visibility.
-  const crackMask = mx_noise_float(xz.mul(uRoadDetailScale.mul(0.45)).add(21.7))
-    .abs()
-    .smoothstep(0.0, 0.055)
-    .oneMinus()
-    .toVar();
-
-  // Analytic surface height → normal map. Coarse aggregate + fine grain minus
-  // the crack channels; sampled at the texel and two neighbours for the
-  // finite-difference gradient.
   /* eslint-disable @typescript-eslint/no-explicit-any -- TSL node graphs defeat the typings */
-  const heightAt = (p: any) => {
+  const crackAt = (p: any) =>
+    mx_noise_float(p.mul(uRoadDetailScale.mul(0.45)).add(21.7))
+      .abs()
+      .smoothstep(0.0, 0.055)
+      .oneMinus();
+  const crackMask = crackAt(xz).toVar();
+
+  // Analytic surface height → normal map, sampled at the texel and two
+  // neighbours for the finite-difference gradient. Pebble + crack only: the
+  // old grain (0.35 m) and grit (0.15 m) octaves sit at/under the 0.35 m tap
+  // spacing, so their contribution to the normal was aliasing noise costing 6
+  // mx_noise evaluations per fragment; speck/micro below keep the fine grain
+  // in the albedo/roughness instead.
+  const heightAt = (p: any, crack: any) => {
     const d = p.mul(uRoadDetailScale);
     const pebble = mx_noise_float(d.mul(2.2))
       .mul(0.5)
       .add(mx_noise_float(d.mul(7.4).add(9.1)).mul(0.22));
-    const grain = mx_noise_float(d.mul(18.0).add(3.3)).mul(0.08);
-    const grit = mx_noise_float(d.mul(42.0).add(12.8)).mul(0.035);
-    const crack = mx_noise_float(p.mul(uRoadDetailScale.mul(0.45)).add(21.7))
-      .abs()
-      .smoothstep(0.0, 0.055)
-      .oneMinus()
-      .mul(0.38);
-    return pebble.add(grain).add(grit).sub(crack);
+    return pebble.sub(crack.mul(0.38));
   };
 
   const subsurfaceLayerAt = (p: any, scale: any, seed: number) => {
@@ -245,18 +249,21 @@ export function buildArenaEnvironment(
   const shockHeight = groundShockHeight(xz).mul(shockVisualScale).toVar();
   // Shock gradient at FULL strength, separate from the micro-relief: the
   // crest's slopes must catch the light hard or the moving geometry reads
-  // flat from the game's high camera.
-  const sgx = groundShockHeight(xz.add(vec2(EPS, 0)))
+  // flat from the game's high camera. Differenced from the fracture-free
+  // silhouette — the lit slope is the ring shape, and the smooth variant
+  // drops 6 mx_noise evaluations per fragment versus the displaced field.
+  const shockSmooth = groundShockHeightSmooth(xz).mul(shockVisualScale).toVar();
+  const sgx = groundShockHeightSmooth(xz.add(vec2(EPS, 0)))
     .mul(shockVisualScale)
-    .sub(shockHeight)
+    .sub(shockSmooth)
     .div(EPS);
-  const sgz = groundShockHeight(xz.add(vec2(0, EPS)))
+  const sgz = groundShockHeightSmooth(xz.add(vec2(0, EPS)))
     .mul(shockVisualScale)
-    .sub(shockHeight)
+    .sub(shockSmooth)
     .div(EPS);
-  const h0 = heightAt(xz).toVar();
-  const gx = heightAt(xz.add(vec2(EPS, 0))).sub(h0).div(EPS);
-  const gz = heightAt(xz.add(vec2(0, EPS))).sub(h0).div(EPS);
+  const h0 = heightAt(xz, crackMask).toVar();
+  const gx = heightAt(xz.add(vec2(EPS, 0)), crackAt(xz.add(vec2(EPS, 0)))).sub(h0).div(EPS);
+  const gz = heightAt(xz.add(vec2(0, EPS)), crackAt(xz.add(vec2(0, EPS)))).sub(h0).div(EPS);
 
   // Real road displacement: the mesh is subdivided below so this crest, crater,
   // and wake move vertices instead of only painting a screen-space ripple.

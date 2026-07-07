@@ -28,6 +28,15 @@ const LAUNCH_DAMPING = 0.55
  * CCD; normal swings (≈0.85) and crowd-wide staggers do not.
  */
 const BULLET_MIN_POWER = 4
+/**
+ * Hard cap on simultaneously-CCD bodies. A mega dive/spin kills ~9 enemies per
+ * frame across its hit window, every one launched hard enough to qualify for
+ * CCD — dozens of concurrent swept bodies plowing through the crate field is
+ * the post-slow-mo physics hitch. Beyond this many, extra launches fall back
+ * to discrete stepping: per 1/120 s substep they travel ~2 m against a 4 m
+ * ground slab, so tunneling stays unlikely.
+ */
+const MAX_CONCURRENT_BULLETS = 14
 const CORPSE_DAMPING = 0.6
 const CORPSE_ANGULAR_DAMPING = 1.4
 const DOWNED_MIN_RECOVERY_TIME = 0.9
@@ -89,7 +98,15 @@ const WEAVE_FREQ_MIN = 1.2
 const WEAVE_FREQ_MAX = 2.6
 /** Per-enemy speed jitter so ranks drift apart instead of marching in step. */
 const SPEED_JITTER = 0.18
-const ENEMY_BATCH_CAPACITY = 2000
+/**
+ * Batches are built once per scene and never resized, so this must cover the
+ * largest crowd any scenario can field: Revolutions' MAX_TARGET (1000) — its
+ * deficit counting includes corpses, so the list never overshoots the target.
+ * Keep it snug: the BatchedMesh matrices textures re-upload in full every
+ * frame any instance moves, so each 1000 of unused capacity is ~0.6 MB/frame
+ * of dead upload across the five buckets.
+ */
+const ENEMY_BATCH_CAPACITY = 1024
 const BODY_COLOR = new THREE.Color(0x15191e)
 const LAPEL_COLOR = new THREE.Color(0x2b3036)
 const HEAD_COLOR = new THREE.Color(0xd4a18f)
@@ -742,9 +759,15 @@ export class Enemy {
     }
   }
 
-  /** Toggle the body's CCD bullet flag, skipping redundant wasm calls. */
+  /** Live CCD bodies across all enemies (see MAX_CONCURRENT_BULLETS). */
+  private static bulletCount = 0
+
+  /** Toggle the body's CCD bullet flag, skipping redundant wasm calls and
+   * refusing new bullets once the global budget is spent. */
   private setBullet(on: boolean): void {
     if (this.bulletOn === on) return
+    if (on && Enemy.bulletCount >= MAX_CONCURRENT_BULLETS) return
+    Enemy.bulletCount += on ? 1 : -1
     this.bulletOn = on
     this.body.setBullet(on)
   }
@@ -927,6 +950,9 @@ export class Enemy {
    * material are module-shared across all enemies.
    */
   dispose(): void {
+    // Return this body's CCD slot to the global budget — scenario switches
+    // dispose enemies mid-flight, and a leaked count would starve future launches.
+    this.setBullet(false)
     this.batchedVisual?.dispose()
     this.material?.dispose()
   }

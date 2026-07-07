@@ -157,6 +157,8 @@ export class Player {
   private readonly pos = { x: 0, y: 0, z: 0 };
   /** Scratch world vector for the "pressing into a wall" test. */
   private readonly wallProbe = new THREE.Vector3();
+  /** Scratch physics velocity, read before we overwrite it for this frame. */
+  private readonly bodyVel = { x: 0, y: 0, z: 0 };
 
   /** Current smoothed body yaw — drives the mesh rotation. */
   private yaw = 0;
@@ -337,9 +339,10 @@ export class Player {
     // jump count. Facades registered by the scenario can be scaled — jump into
     // a wall and hold toward it to cling and climb, jump again to leap off.
     this.body.getPosition(this.pos);
+    this.body.getLinearVelocity(this.bodyVel);
     const bodyY = this.pos.y;
     const feetY = bodyY - PLAYER_HEIGHT / 2;
-    const grounded = this.computeGrounded(bodyY, this.vy, dt);
+    const grounded = this.computeGrounded(bodyY, this.vy, dt, this.bodyVel.y);
     const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS;
     this.prevY = bodyY;
     // Cache this frame's ground state + feet height for combat / effects.
@@ -417,10 +420,16 @@ export class Player {
 
     // Variable jump height: letting go of jump while still rising cuts the
     // ascent short so a tap is a short hop and only a held press floats to the
-    // full apex — no more hanging at the top of a half-committed leap. Only the
-    // rising phase of a real jump is trimmed; a climb, a dive, or the fall are
-    // left alone. Consumed every frame so the release edge never goes stale.
-    if (input.consumeJumpRelease() && this.vy > 0 && !this.climbing && !this.smashing) {
+    // full apex. A charged double-jump release owns that same edge first: it is
+    // the deliberate crush-down commit, not a height trim.
+    const jumpReleased = input.consumeJumpRelease();
+    if (
+      jumpReleased &&
+      !this.resolveChargeJumpReleaseDive() &&
+      this.vy > 0 &&
+      !this.climbing &&
+      !this.smashing
+    ) {
       this.vy *= JUMP_CUT;
     }
 
@@ -564,13 +573,37 @@ export class Player {
     this.body.getPosition(this.pos);
     const bodyY = this.pos.y;
     const feetY = bodyY - PLAYER_HEIGHT / 2;
-    if (this.canGroundSpin(bodyY, this.vy, this.lastDt)) return;
+    this.body.getLinearVelocity(this.bodyVel);
+    if (this.canGroundSpin(bodyY, this.vy, this.lastDt, this.bodyVel.y)) return;
 
     if (input.attackPressQueued) input.consumeAttack();
     const charge = this.combat?.chargeLevel ?? 0;
     const mega = !!this.combat?.megaArmed && charge >= MEGA_DIVE_LEVEL;
     this.startSmash(feetY, mega);
     this.combat?.cancelForDive();
+  }
+
+  /**
+   * While a sword charge is held through the double jump, releasing jump is the
+   * air-smash commit. The first jump release still belongs to variable-height
+   * jumping so a charged hop does not instantly cancel itself into a dive.
+   */
+  private resolveChargeJumpReleaseDive(): boolean {
+    if (this.smashing) return false;
+    if (!this.combat?.charging) return false;
+    if (this.jumps < MAX_JUMPS) return false;
+
+    this.body.getPosition(this.pos);
+    const bodyY = this.pos.y;
+    const feetY = bodyY - PLAYER_HEIGHT / 2;
+    this.body.getLinearVelocity(this.bodyVel);
+    if (this.canGroundSpin(bodyY, this.vy, this.lastDt, this.bodyVel.y)) return false;
+
+    const charge = this.combat.chargeLevel;
+    const mega = this.combat.megaArmed && charge >= MEGA_DIVE_LEVEL;
+    this.startSmash(feetY, mega);
+    this.combat.cancelForDive();
+    return true;
   }
 
   /**
@@ -589,7 +622,8 @@ export class Player {
     this.body.getPosition(this.pos);
     const bodyY = this.pos.y;
     const feetY = bodyY - PLAYER_HEIGHT / 2;
-    const spinAllowed = this.canGroundSpin(bodyY, this.vy, this.lastDt);
+    this.body.getLinearVelocity(this.bodyVel);
+    const spinAllowed = this.canGroundSpin(bodyY, this.vy, this.lastDt, this.bodyVel.y);
     this.groundedNow = spinAllowed;
 
     if (!spinAllowed) {
@@ -604,23 +638,33 @@ export class Player {
   }
 
   /** True when feet are on the floor or a rooftop ledge this frame. */
-  private computeGrounded(bodyY: number, vy: number, dt: number): boolean {
+  private computeGrounded(
+    bodyY: number,
+    vy: number,
+    dt: number,
+    physicalVy = vy,
+  ): boolean {
     const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS;
     const wantedDrop = Math.max(0, -vy) * dt;
-    const blocked = vy < -1 && this.prevY - bodyY < wantedDrop * 0.4;
+    const actualDrop = this.prevY - bodyY;
+    const blocked =
+      vy < -1 &&
+      physicalVy > -0.2 &&
+      actualDrop >= 0 &&
+      actualDrop < wantedDrop * 0.4;
     return (onFloor || blocked) && vy <= 0.01 && !this.climbing;
   }
 
   /** Standing still on a walkable surface — the only state that may spin. */
-  private isFirmlyOnGround(bodyY: number, vy: number, dt: number): boolean {
+  private isFirmlyOnGround(bodyY: number, vy: number, dt: number, physicalVy = vy): boolean {
     if (this.climbing) return false;
     if (Math.abs(vy) > 0.15) return false;
-    return this.computeGrounded(bodyY, vy, dt);
+    return this.computeGrounded(bodyY, vy, dt, physicalVy);
   }
 
   /** Ground spin is allowed only from a settled, non-jump state. */
-  private canGroundSpin(bodyY: number, vy: number, dt: number): boolean {
-    return !this.airArc && this.jumps === 0 && this.isFirmlyOnGround(bodyY, vy, dt);
+  private canGroundSpin(bodyY: number, vy: number, dt: number, physicalVy = vy): boolean {
+    return !this.airArc && this.jumps === 0 && this.isFirmlyOnGround(bodyY, vy, dt, physicalVy);
   }
 
   /** Commit to a downward dive smash from the current airborne position. */

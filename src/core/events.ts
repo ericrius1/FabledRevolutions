@@ -60,6 +60,11 @@ export interface GameEventMap {
   /** Cosmetic lightning bolt touched down (aftermath); used for thunder SFX. */
   "mega-lightning": { point: THREE.Vector3 };
 
+  // ---- Scenario staging ----
+  /** One or more staged enemies finished a high fly-in and hit formation.
+   * `point` is the average landing position for the frame. */
+  "enemy-arrival-impact": { point: THREE.Vector3; count: number; dropHeight: number };
+
   // ---- Travelling ground shockwave ----
   /** Fired each frame per live wave front, AFTER the wave advanced: the band
    * (prevFront, front] is what the crest swept this frame. Scenarios use it to

@@ -1,5 +1,5 @@
 import * as THREE from "three/webgpu";
-import { mx_noise_float, uniform, vec3 } from "three/tsl";
+import { float, mx_noise_float, uniform, vec3 } from "three/tsl";
 
 const MAX_STORED_AGE = 999;
 const PLAYER_FORCE_SCALE = 0.9;
@@ -206,19 +206,12 @@ function shockShape(worldXZ: any, slot: ShockSlot): any {
   return { dist, age, lifeFade, radiusFade, ring, strength };
 }
 
-function shockHeight(worldXZ: any, slot: ShockSlot): any {
+function shockHeightWithFracture(worldXZ: any, slot: ShockSlot, fracture: any): any {
   const s = shockShape(worldXZ, slot);
-  const fracture = mx_noise_float(worldXZ.mul(1.08).add(slot.age.mul(2.35)))
-    .mul(0.5)
-    .add(0.5);
-
   // Sub-linear height: strength scales linearly with power (mega dives pass
   // power 5), but the crest compresses toward sqrt so a normal dive raises a
   // readable ~0.6m roll and a mega raises a ~2m road wave, not a mountain.
-  const crest = s.strength
-    .mul(0.9)
-    .div(slot.power.max(1).sqrt())
-    .mul(fracture.mul(0.42).add(0.78));
+  const crest = s.strength.mul(0.9).div(slot.power.max(1).sqrt()).mul(fracture);
 
   const craterLife = s.age
     .smoothstep(0.0, 0.12)
@@ -233,8 +226,30 @@ function shockHeight(worldXZ: any, slot: ShockSlot): any {
   return crest.add(crater);
 }
 
+function shockHeight(worldXZ: any, slot: ShockSlot): any {
+  const fracture = mx_noise_float(worldXZ.mul(1.08).add(slot.age.mul(2.35)))
+    .mul(0.5)
+    .add(0.5);
+  return shockHeightWithFracture(worldXZ, slot, fracture.mul(0.42).add(0.78));
+}
+
+/** Fracture-free silhouette at the mean of the fracture band (0.78..1.2), so
+ * it tracks the displaced crest without paying mx_noise per evaluation. The
+ * floor differences this three times per fragment for its normal — the slope
+ * that catches the light is the ring shape; differencing the noisy field cost
+ * 6 extra noise evaluations for sub-visible sparkle. */
+function shockHeightSmooth(worldXZ: any, slot: ShockSlot): any {
+  return shockHeightWithFracture(worldXZ, slot, float(0.99));
+}
+
 export function groundShockHeight(worldXZ: any): any {
   return shockHeight(worldXZ, smashShock).add(shockHeight(worldXZ, lightningShock));
+}
+
+export function groundShockHeightSmooth(worldXZ: any): any {
+  return shockHeightSmooth(worldXZ, smashShock).add(
+    shockHeightSmooth(worldXZ, lightningShock),
+  );
 }
 
 export function groundShockGlow(worldXZ: any): any {
