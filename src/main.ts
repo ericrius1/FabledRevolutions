@@ -231,19 +231,19 @@ async function boot(): Promise<void> {
     document.body.appendChild(sfxVolume.root)
   }
 
-  // Info dossier: opening drops the world into deep slow-motion (a near-frozen
-  // 0.05× crawl behind the reading panel) rather than a hard pause, and suspends
-  // gameplay input. Closing restores the prior slow-mo multiplier.
-  const INFO_SLOWMO = 0.05
-  let slowMoBeforeInfo = 1
+  // Info dossier: opening pauses the game and suspends gameplay input. Closing
+  // restores the prior pause state.
+  let pausedBeforeInfo = false
   const infoModal = new InfoModal({
     onOpen: () => {
-      slowMoBeforeInfo = clock.slowMo
-      clock.slowMo = INFO_SLOWMO
+      pausedBeforeInfo = clock.paused
+      clock.paused = true
+      document.body.classList.add("paused")
       input.setGameplayEnabled(false)
     },
     onClose: () => {
-      clock.slowMo = slowMoBeforeInfo
+      clock.paused = pausedBeforeInfo
+      document.body.classList.toggle("paused", clock.paused)
       if (!cameraMode) input.setGameplayEnabled(true)
     }
   })
@@ -316,6 +316,10 @@ async function boot(): Promise<void> {
 
     // While the info dossier is open, hotkeys still drain their queues but do
     // nothing — the modal owns the pause state and Escape.
+    if (input.consumeInfoModalToggle()) {
+      if (infoModal.isOpen) infoModal.close()
+      else infoModal.open()
+    }
     if (input.consumeCameraToggle() && !infoModal.isOpen) {
       cameraMode = !cameraMode
       if (cameraMode) {

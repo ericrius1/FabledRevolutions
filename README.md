@@ -59,7 +59,12 @@ persists in localStorage.
 | --- | --- | --- |
 | Move | WASD / arrows | Left stick (analog speed) |
 | Aim | Mouse | Right stick |
-| Attack | Left click | RT / RB / A |
+| Attack | Left click | RT · hold to charge |
+| Sprint | Ctrl (hold) | LB / RB / LT |
+| Info / pause | Esc | Start |
+| Effects panel | Shift | Select |
+| Camera mode | C | — |
+| Immersive HUD | I | — |
 
 The bottom-left legend follows whichever device you used last, and each row
 lights up while its input is engaged. Attacks buffer briefly, so mashing chains

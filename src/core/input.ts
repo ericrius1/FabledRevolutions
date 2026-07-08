@@ -20,6 +20,10 @@ const JUMP_BUTTON = 0;
 const SPRINT_BUTTONS = [4, 5, 6];
 /** Standard-mapping button index for attack (RT). */
 const ATTACK_BUTTON = 7;
+/** Standard-mapping button index for panel toggle (Select / View). */
+const PANEL_BUTTON = 8;
+/** Standard-mapping button index for info modal toggle (Start / Options). */
+const INFO_MODAL_BUTTON = 9;
 
 /**
  * Keyboard + pointer + gamepad state. Movement is polled each frame; aim comes
@@ -32,11 +36,12 @@ export class Input {
   private pointerNdc = new THREE.Vector2(0, 0);
   private attackQueued = false;
   private releaseQueued = false;
-  /** Rising-edge toggles for mode hotkeys (C / P / I / /). */
+  /** Rising-edge toggles for mode hotkeys (C / P / I / Shift / Esc). */
   private cameraToggleQueued = false;
   private pauseToggleQueued = false;
   private immersiveToggleQueued = false;
   private panelToggleQueued = false;
+  private infoModalToggleQueued = false;
   /** When false, pointer / pad attacks are ignored (camera-control mode). */
   private gameplayEnabled = true;
   /** Rising-edge latch for jump (Space / A) — one jump per press. */
@@ -61,6 +66,8 @@ export class Input {
   private sprintPadHeld = false;
   private prevAttackDown = false;
   private prevJumpDown = false;
+  private prevPanelDown = false;
+  private prevInfoModalDown = false;
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -81,7 +88,10 @@ export class Input {
       if (e.code === "KeyC") this.cameraToggleQueued = true;
       if (e.code === "KeyP") this.pauseToggleQueued = true;
       if (e.code === "KeyI") this.immersiveToggleQueued = true;
-      if (e.code === "Slash") this.panelToggleQueued = true;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+        this.panelToggleQueued = true;
+      }
+      if (e.code === "Escape") this.infoModalToggleQueued = true;
     }
     // Rising edge only: the OS repeats keydown while Space is held, but a jump
     // fires once per physical press. Guard on the key not already being down.
@@ -147,6 +157,8 @@ export class Input {
       if (this.prevJumpDown) this.jumpReleaseQueued = true;
       this.prevAttackDown = false;
       this.prevJumpDown = false;
+      this.prevPanelDown = false;
+      this.prevInfoModalDown = false;
       this.sprintPadHeld = false;
       this.attackHeldNow = this.gameplayEnabled && this.mouseAttackDown;
       return;
@@ -159,6 +171,8 @@ export class Input {
 
     const jumpDown = pad.buttons[JUMP_BUTTON]?.pressed ?? false;
     const attackDown = pad.buttons[ATTACK_BUTTON]?.pressed ?? false;
+    const panelDown = pad.buttons[PANEL_BUTTON]?.pressed ?? false;
+    const infoModalDown = pad.buttons[INFO_MODAL_BUTTON]?.pressed ?? false;
     this.sprintPadHeld = SPRINT_BUTTONS.some((i) => pad.buttons[i]?.pressed);
     const anyActivity =
       this.lx !== 0 ||
@@ -184,6 +198,12 @@ export class Input {
     }
     if (!attackDown && this.prevAttackDown) this.releaseQueued = true;
     this.prevAttackDown = attackDown;
+
+    if (panelDown && !this.prevPanelDown) this.panelToggleQueued = true;
+    this.prevPanelDown = panelDown;
+
+    if (infoModalDown && !this.prevInfoModalDown) this.infoModalToggleQueued = true;
+    this.prevInfoModalDown = infoModalDown;
     this.attackHeldNow = this.gameplayEnabled && (attackDown || this.mouseAttackDown);
     if (this.rx !== 0 || this.ry !== 0) this.lookTimer = LOOK_DECAY;
   }
@@ -277,6 +297,12 @@ export class Input {
     return true;
   }
 
+  consumeInfoModalToggle(): boolean {
+    if (!this.infoModalToggleQueued) return false;
+    this.infoModalToggleQueued = false;
+    return true;
+  }
+
   /** Returns true once per queued attack; resets the flag. */
   consumeAttack(): boolean {
     if (!this.gameplayEnabled || !this.attackQueued) return false;
@@ -315,11 +341,11 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Shift / LB / RB / LT) — triples ground move speed. */
+  /** True while sprint is held (Ctrl / LB / RB / LT) — triples ground move speed. */
   get sprintHeld(): boolean {
     return (
-      this.keys.has("ShiftLeft") ||
-      this.keys.has("ShiftRight") ||
+      this.keys.has("ControlLeft") ||
+      this.keys.has("ControlRight") ||
       this.sprintPadHeld
     );
   }

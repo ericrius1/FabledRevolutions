@@ -23,12 +23,18 @@ const LABELS: Record<InputSource, Record<Action, RowLabels>> = {
 
 const ACTIONS: Action[] = ["move", "look", "attack"];
 
-const HOTKEY_ROWS: { title: string; value: string }[] = [
-  { title: "CAMERA", value: "C · ORBIT · DOLLY · PAN" },
-  { title: "PAUSE", value: "P" },
-  { title: "IMMERSIVE", value: "I" },
-  { title: "PANEL", value: "/" },
-];
+const HOTKEY_ROWS: Record<InputSource, { title: string; value: string }[]> = {
+  kbm: [
+    { title: "CAMERA", value: "C · ORBIT · DOLLY · PAN" },
+    { title: "INFO", value: "ESC" },
+    { title: "IMMERSIVE", value: "I" },
+    { title: "PANEL", value: "SHIFT" },
+  ],
+  gamepad: [
+    { title: "INFO", value: "START" },
+    { title: "PANEL", value: "SELECT" },
+  ],
+};
 
 /**
  * Bottom-left controls legend. Reflects the active control scheme (keyboard/
@@ -41,6 +47,8 @@ export class Legend {
     Action,
     { row: HTMLDivElement; title: HTMLSpanElement; value: HTMLSpanElement }
   >();
+  private readonly hotkeyRows: HTMLDivElement[] = [];
+  private readonly hotkeyVals: HTMLSpanElement[] = [];
   private source: InputSource | null = null;
 
   constructor() {
@@ -60,7 +68,7 @@ export class Legend {
 
     const hotkeys = document.createElement("div");
     hotkeys.className = "legend-hotkeys";
-    for (const { title, value } of HOTKEY_ROWS) {
+    for (const { title, value } of HOTKEY_ROWS.kbm) {
       const row = document.createElement("div");
       row.className =
         title === "PANEL" ? "row hotkey panel-hint" : "row hotkey";
@@ -79,6 +87,8 @@ export class Legend {
       }
       row.append(key, val);
       hotkeys.appendChild(row);
+      this.hotkeyRows.push(row);
+      this.hotkeyVals.push(val);
     }
     this.root.appendChild(hotkeys);
 
@@ -92,6 +102,29 @@ export class Legend {
       const labels = LABELS[source][action];
       els.title.textContent = labels.title;
       els.value.textContent = labels.value;
+    }
+
+    const rows = HOTKEY_ROWS[source];
+    for (let i = 0; i < this.hotkeyRows.length; i++) {
+      const rowEl = this.hotkeyRows[i];
+      const valEl = this.hotkeyVals[i];
+      if (i < rows.length) {
+        const { title, value } = rows[i];
+        rowEl.hidden = false;
+        rowEl.className =
+          title === "PANEL" ? "row hotkey panel-hint" : "row hotkey";
+        rowEl.querySelector<HTMLSpanElement>(".key")!.textContent = title;
+        if (title === "PANEL") {
+          const cap = document.createElement("kbd");
+          cap.className = "panel-keycap";
+          cap.textContent = value;
+          valEl.replaceChildren(cap);
+        } else {
+          valEl.textContent = value;
+        }
+      } else {
+        rowEl.hidden = true;
+      }
     }
   }
 

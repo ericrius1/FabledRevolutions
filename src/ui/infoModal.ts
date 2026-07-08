@@ -28,18 +28,12 @@ export class InfoModal {
   private rainRaf = 0
   private rainDrops: number[] = []
   private rainLast = 0
-  private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape" && this.openState) {
-      e.stopPropagation()
-      this.close()
-    }
-  }
 
   constructor(private readonly hooks: InfoModalHooks) {
     this.button = document.createElement("button")
     this.button.className = "info-button"
     this.button.type = "button"
-    this.button.title = "About this project — systems, physics, rendering"
+    this.button.title = "About this project — systems, physics, rendering (Esc)"
     this.button.setAttribute("aria-label", "About this project")
     this.button.innerHTML = `<span class="info-button-glyph">i</span><span class="info-button-ring"></span>`
     this.button.addEventListener("click", () => this.open())
@@ -48,11 +42,6 @@ export class InfoModal {
     this.root.className = "info-overlay"
     this.root.hidden = true
     this.build()
-
-    // Escape closes. Registered once, permanently, in capture phase so it wins
-    // over any gameplay keydown handlers regardless of what currently has focus;
-    // the openState guard makes it a no-op while the modal is closed.
-    window.addEventListener("keydown", this.onKeyDown, true)
   }
 
   get isOpen(): boolean {
