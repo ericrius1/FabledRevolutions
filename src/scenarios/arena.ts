@@ -157,10 +157,10 @@ export interface ArenaCorridorBounds {
   nearZ: number;
   /** Far edge along −Z. */
   farZ: number;
-  /** Optional decorative road extent behind {@link nearZ} (+Z). The physics slab
-   * and every gameplay bound stop at {@link nearZ}; only a non-colliding backdrop
-   * road quad reaches this far, so the street can extend behind the player
-   * without moving where anything falls off the world. */
+  /** Optional decorative road extent behind {@link nearZ} (+Z). The visible road
+   * (and the walkable physics slab + gameplay floor bounds) reach this far so the
+   * player can stand on every bit of street drawn behind the spawn instead of
+   * falling through it. The far/side fall-off edges are unchanged. */
   visualNearZ?: number;
 }
 
@@ -420,16 +420,22 @@ export function buildArenaEnvironment(
   ctx.scene.add(grid);
   objects.push(grid);
 
-  // Physics ground slab — full arena or corridor footprint.
+  // Physics ground slab — full arena or corridor footprint. The corridor slab
+  // reaches the decorative road's back edge (visualNearZ) so the player can
+  // stand on every bit of road drawn behind the spawn; only the true void past
+  // the backdrop still drops them.
   if (corridor) {
+    const slabNearZ = corridor.visualNearZ ?? corridor.nearZ;
+    const slabDepth = slabNearZ - corridor.farZ;
+    const slabCenterZ = (slabNearZ + corridor.farZ) / 2;
     bodies.push(
       ctx.physics.createBox({
         x: 0,
         y: -2,
-        z: floorCenterZ,
+        z: slabCenterZ,
         hx: corridor.halfWidth,
         hy: 2,
-        hz: floorDepth / 2,
+        hz: slabDepth / 2,
         kind: "static",
         category: Category.Ground,
       }),
@@ -438,10 +444,10 @@ export function buildArenaEnvironment(
     bodies.push(ctx.physics.createGround(FLOOR_HALF));
   }
 
-  // Decorative road behind the corridor's near edge: extends the street past
-  // where the physics slab stops, so the backdrop city (see CubeBuildings) has
-  // ground under and behind it. No collider — the slab and every gameplay bound
-  // end at corridor.nearZ, so nothing can stand here; it's purely visual.
+  // Road behind the corridor's near edge: extends the street back so the
+  // backdrop city (see CubeBuildings) has ground under it. The physics slab
+  // above now reaches visualNearZ, so this is the visible skin of the walkable
+  // back road, not a floating backdrop.
   if (
     corridor &&
     corridor.visualNearZ != null &&

@@ -370,8 +370,9 @@ export class RevolutionsScenario implements Scenario {
       halfWidth: this.buildings.wallX + s * 2,
       nearZ,
       farZ: this.buildings.farZ,
-      // Physics/gameplay stop at nearZ; a decorative road quad reaches BEHIND_EXTENT
-      // further back so the extended backdrop city has ground under it.
+      // Walkable slab + floor bounds reach visualNearZ; the road quad reaches
+      // BEHIND_EXTENT further back so the whole visible street is standable and
+      // the extended backdrop city has ground under it.
       visualNearZ: nearZ + BEHIND_EXTENT
     }
   }
@@ -395,13 +396,15 @@ export class RevolutionsScenario implements Scenario {
       }))
     )
     // Road footprint = the physics floor slab. Off it, the player falls into
-    // the void and dies (main loop restarts the scenario) — same as agents.
+    // the void and dies (main loop restarts the scenario) — same as agents. The
+    // back edge is visualNearZ so the whole visible street behind the spawn is
+    // standable, not just the margin up to nearZ.
     const b = this.corridorBounds()
     this.ctx.player.setFloorBounds({
       minX: -b.halfWidth,
       maxX: b.halfWidth,
       minZ: b.farZ,
-      maxZ: b.nearZ
+      maxZ: b.visualNearZ ?? b.nearZ
     })
   }
 
