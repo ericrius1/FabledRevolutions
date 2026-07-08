@@ -120,7 +120,10 @@ export function triggerGroundShockwave(
   }
 
   const scaledPower = power * (mega ? 1.45 : 0.82) * PLAYER_FORCE_SCALE;
-  const radius = Math.min(SMASH_RADIUS_CAP, power * (mega ? 18 : 10) * PLAYER_RADIUS_SCALE);
+  // Mega ripples travel ~2x as far (radius cap and reach both doubled) so the
+  // wave — visible crest and CPU flinging front alike — sweeps twice the ground.
+  const radiusCap = mega ? SMASH_RADIUS_CAP * 2 : SMASH_RADIUS_CAP;
+  const radius = Math.min(radiusCap, power * (mega ? 36 : 10) * PLAYER_RADIUS_SCALE);
   const speed = mega ? 58 : 48;
   const width = (mega ? 4.6 : 3.2) * Math.min(1.15, Math.sqrt(Math.max(1, power)));
   activateShock(smashShock, origin, scaledPower, radius, speed, radius / speed + 0.46, width);

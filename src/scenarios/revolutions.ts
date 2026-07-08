@@ -93,9 +93,10 @@ const ROW_OVERRUN = 0
 const RANK_NEAR_Z = 0
 /** Opening fill band reaches a little ahead of spawn so the first rows read. */
 const OPENING_NEAR_Z = 6
-/** Below this Y an agent has cleared the floor edge and is falling into the
- * void — a permanent kill. The floor slab bottoms out at y=-4. */
-const FALL_KILL_Y = -8
+/** Below this Y a knocked-off agent has fallen far enough to retire — a
+ * permanent kill. Set deep (~1000 m) so bodies plunge a long, visible way into
+ * the void before they vanish, rather than blinking out at the floor edge. */
+const FALL_KILL_Y = -1000
 
 const PREFIX = "fabled-revolutions.revolutions."
 const SETTINGS_SCHEMA_KEY = `${PREFIX}settings-schema`
@@ -357,6 +358,15 @@ export class RevolutionsScenario implements Scenario {
         topAt: (z: number) => this.buildings.topAt(sign, z)
       }))
     )
+    // Road footprint = the physics floor slab. Off it, the player falls into
+    // the void and dies (main loop restarts the scenario) — same as agents.
+    const b = this.corridorBounds()
+    this.ctx.player.setFloorBounds({
+      minX: -b.halfWidth,
+      maxX: b.halfWidth,
+      minZ: b.farZ,
+      maxZ: b.nearZ
+    })
   }
 
   /**

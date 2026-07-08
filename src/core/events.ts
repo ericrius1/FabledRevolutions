@@ -25,6 +25,11 @@ export interface GameEventMap {
   "player-shielded": { point: THREE.Vector3; dir: THREE.Vector3 };
   "player-death": Record<string, never>;
 
+  /** A ranged agent (rail sniper / ground skirmisher) hurled a knife. `origin`
+   * is where it launches from (shoulder height, up on the rail for perched
+   * throwers); the knife system leads the live player from there. */
+  "enemy-throw": { origin: THREE.Vector3 };
+
   // ---- Charge / spin attack ----
   /** The sword began charging (attack held past the hold threshold). */
   "charge-start": Record<string, never>;

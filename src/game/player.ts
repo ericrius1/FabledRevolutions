@@ -273,6 +273,11 @@ export class Player {
   /** Body y last frame — lets us detect a blocked descent (rooftop landing). */
   private prevY = PLAYER_HEIGHT / 2;
 
+  /** Footprint the road exists over. Outside it the feet find no ground at
+   * y=0, so the player falls into the void (gameplay then kills + restarts).
+   * Null = infinite floor everywhere (default; non-corridor scenarios/tests). */
+  private floorBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
+
   constructor(
     physics: Physics,
     spawn: THREE.Vector2,
@@ -577,6 +582,28 @@ export class Player {
   }
 
   /**
+   * Register the road footprint the player can stand on (scenario-provided).
+   * Pass null to restore the default infinite floor (non-corridor scenarios).
+   */
+  setFloorBounds(
+    bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null,
+  ): void {
+    this.floorBounds = bounds;
+  }
+
+  /** Whether the current XZ position sits over solid road (not the void). */
+  private isOverFloor(): boolean {
+    const b = this.floorBounds;
+    if (!b) return true;
+    return (
+      this.pos.x >= b.minX &&
+      this.pos.x <= b.maxX &&
+      this.pos.z >= b.minZ &&
+      this.pos.z <= b.maxZ
+    );
+  }
+
+  /**
    * A fresh attack press while airborne starts the dive on that frame. A held
    * charge that began on the ground does not count as a fresh press; releasing
    * it in the air is handled by {@link resolveAttackRelease}.
@@ -659,7 +686,11 @@ export class Player {
     dt: number,
     physicalVy = vy,
   ): boolean {
-    const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS;
+    // The y=0 road only holds you up where there's actually road. Off its edge
+    // the feet find nothing and you keep falling. Rooftop landings still ground
+    // via the physics-contact `blocked` branch below, so this only gates the
+    // flat street plane, not the buildings.
+    const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS && this.isOverFloor();
     const wantedDrop = Math.max(0, -vy) * dt;
     const actualDrop = this.prevY - bodyY;
     const blocked =

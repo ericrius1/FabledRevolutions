@@ -553,7 +553,8 @@ async function boot(): Promise<void> {
     for (const front of fronts) {
       const basePower =
         front.power *
-        (front.mega ? 1.6 : 1) *
+        // Mega ripples (spin release + mega smash) fling ~2x as hard.
+        (front.mega ? 3.2 : 1) *
         (front.kind === "lightning" ? SHOCK_WAVE_LIGHTNING_SCALE : 1)
       // Only the thin annulus (prevFront, front] matters; the circle query
       // over-collects the interior and the band test below does the filtering.
@@ -570,9 +571,9 @@ async function boot(): Promise<void> {
         const dist = Math.hypot(dx, dz)
         if (dist <= front.prevFront || dist > front.front) continue
         const falloff = Math.max(0.2, 1 - dist / front.radius)
-        // Cap so the power-5 mega dive launches hard but not into orbit
-        // (matches the mega spin's knockback ceiling).
-        const s = Math.min(3, basePower * falloff)
+        // Cap so the launch stays hard but not into orbit. Mega waves get a
+        // doubled ceiling to match their doubled shove (basePower 3.2x above).
+        const s = Math.min(front.mega ? 6 : 3, basePower * falloff)
         const inv = dist > 0.001 ? 1 / dist : 0
         const nx = inv > 0 ? dx * inv : 1
         const nz = inv > 0 ? dz * inv : 0
