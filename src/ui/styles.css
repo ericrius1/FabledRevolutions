@@ -1345,7 +1345,7 @@ body.paused .pause-overlay {
   left: 14px;
   right: 14px;
   bottom: 12px;
-  height: 42%;
+  height: 21%;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.28s ease;
@@ -1531,20 +1531,45 @@ body.paused .pause-overlay {
   pointer-events: none;
 }
 
+/* Larger, readable label type for both sticky synth diagrams. The shapes are
+   coordinate-fixed, so bumping only the text lets the charts read much bigger. */
+.synth-charge-diagram .dg-title,
 .synth-blast-diagram .dg-title {
-  font: 700 15px var(--mx-mono);
+  font: 700 18px var(--mx-mono);
 }
 
+.synth-charge-diagram .dg-box-title,
+.synth-blast-diagram .dg-box-title {
+  font: 700 15.5px var(--mx-mono);
+}
+
+.synth-charge-diagram .dg-hot,
+.synth-blast-diagram .dg-hot {
+  font: 700 16px var(--mx-mono);
+}
+
+.synth-charge-diagram .dg-sub,
 .synth-blast-diagram .dg-sub {
-  font: 400 12.5px var(--mx-mono);
+  font: 400 13.5px var(--mx-mono);
+}
+
+.synth-charge-diagram .dg-label,
+.synth-blast-diagram .dg-label {
+  font-size: 13px;
+}
+
+/* The blast timeline has open whitespace (label column, sparse chart), so its
+   type can go a notch larger than the dense charge patch without colliding. */
+.synth-blast-diagram .dg-title {
+  font-size: 20px;
 }
 
 .synth-blast-diagram .dg-hot {
-  font: 700 14px var(--mx-mono);
+  font-size: 17.5px;
 }
 
-.synth-blast-diagram .dg-box-title {
-  font: 700 13.5px var(--mx-mono);
+.synth-blast-diagram .dg-sub {
+  font-size: 15px;
 }
 
 .synth-blast-diagram .sd-layer-line {

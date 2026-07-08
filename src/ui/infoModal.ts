@@ -687,7 +687,7 @@ export class InfoModal {
               <clipPath id="synth-blast-chart-clip"><rect x="320" y="86" width="708" height="554" rx="8"/></clipPath>
 
               <text x="34" y="42" class="dg-title">MEGA BLAST LAYER TIMELINE</text>
-              <text x="34" y="66" class="dg-sub">one combat event, four scheduled envelopes</text>
+              <text x="34" y="66" class="dg-sub">four scheduled envelopes</text>
               <line x1="296" y1="86" x2="296" y2="640" class="bd-divider"/>
               <text x="340" y="66" class="dg-hot">scroll the pinned panel: each curve reveals as the release opens</text>
 
