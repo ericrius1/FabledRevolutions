@@ -118,6 +118,13 @@ const FALL_KILL_Y = -1000
  * this Y just confirms it has started to drop, so a body punched briefly below
  * the slab top by a hard hit but still over the road is never miscounted. */
 const FALL_COUNT_Y = -0.5
+/**
+ * Purely-decorative backdrop depth (m) added BEHIND the player (+Z): buildings
+ * and road extend this far past the spawn so the street reads as a city both
+ * ahead and behind. Backdrop only — no colliders and no agents live back here,
+ * and the agent spawn (z=0) and fall-death corridor are unchanged.
+ */
+const BEHIND_EXTENT = 50
 
 const PREFIX = "fabled-revolutions.revolutions."
 const SETTINGS_SCHEMA_KEY = `${PREFIX}settings-schema`
@@ -342,6 +349,7 @@ export class RevolutionsScenario implements Scenario {
       cubeSize: tuning.cubeSize,
       corridorHalf: tuning.corridorHalf,
       length: tuning.length,
+      behindLength: BEHIND_EXTENT,
       avgFloors: Math.round(tuning.avgFloors),
       litFraction: tuning.litFraction,
       maxDebris: 160
@@ -357,10 +365,14 @@ export class RevolutionsScenario implements Scenario {
    * shove the player up into a permanent float. */
   private corridorBounds(): ArenaCorridorBounds {
     const s = this.buildings.cubeSize
+    const nearZ = this.buildings.nearZ + tuning.behindMargin
     return {
       halfWidth: this.buildings.wallX + s * 2,
-      nearZ: this.buildings.nearZ + tuning.behindMargin,
-      farZ: this.buildings.farZ
+      nearZ,
+      farZ: this.buildings.farZ,
+      // Physics/gameplay stop at nearZ; a decorative road quad reaches BEHIND_EXTENT
+      // further back so the extended backdrop city has ground under it.
+      visualNearZ: nearZ + BEHIND_EXTENT
     }
   }
 

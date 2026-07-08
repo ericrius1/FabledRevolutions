@@ -59,6 +59,11 @@ export interface BuildingConfig {
   /** Total corridor span along Z (snapped to whole cells). Only the forward
    * half (−Z from the player) is built. */
   length: number;
+  /** Metres of purely decorative buildings to extend BEHIND the player (+Z).
+   * These rows carry no colliders, no wall-climb roofs, and no agents — backdrop
+   * only, so the gameplay corridor (nearZ, wall surfaces, agent bounds) is
+   * unchanged. */
+  behindLength: number;
   /** Average tower height in cubes (±2 randomized per tower). */
   avgFloors: number;
   /** Fraction of rooms with the lights on. */
@@ -366,16 +371,18 @@ export class CubeBuildings {
       depthBase: number,
       heightScale: number,
       collide: boolean,
+      izStart: number,
+      izEnd: number,
     ): void => {
-      let iz = 0;
-      while (iz < cellsZ) {
+      let iz = izStart;
+      while (iz < izEnd) {
         const width = 2 + Math.floor(Math.random() * 2);
         // Wide spread around the average, plus rare tall spikes, for a jagged,
         // varied skyline rather than a uniform wall.
         let towerH = Math.round(cfg.avgFloors * heightScale * (0.6 + Math.random() * 0.85));
         if (Math.random() < 0.12) towerH = Math.round(towerH * (1.3 + Math.random() * 0.6));
         towerH = Math.max(2, towerH);
-        const zEnd = Math.min(cellsZ, iz + width);
+        const zEnd = Math.min(izEnd, iz + width);
         let towerMaxH = 0;
         for (let z = iz; z < zEnd; z++) {
           const colH = Math.max(2, towerH - Math.floor(Math.random() * 3));
@@ -415,12 +422,22 @@ export class CubeBuildings {
       }
     };
 
+    // Decorative buildings extend BEHIND the player (+Z → negative cell index).
+    // Behind rows never collide and spawn no towers, so they add no wall-climb
+    // roofs, colliders, or agents — the gameplay corridor (nearZ, wall surfaces,
+    // agent spawn/fall bounds) is untouched; this is pure backdrop.
+    const behindCells = Math.max(0, Math.round(cfg.behindLength / s));
     for (const side of [-1, 1]) {
       // Front row lines the corridor (collides, carries the climb roofs); a
       // taller back row sits behind a one-cell alley for depth. The back row is
       // purely decorative — same static instanced mesh, no physics.
-      buildRow(side, 0, 1, true);
-      buildRow(side, 3, 1.45, false);
+      buildRow(side, 0, 1, true, 0, cellsZ);
+      buildRow(side, 3, 1.45, false, 0, cellsZ);
+      if (behindCells > 0) {
+        // Same street look reaching back past the spawn, backdrop only.
+        buildRow(side, 0, 1, false, -behindCells, 0);
+        buildRow(side, 3, 1.45, false, -behindCells, 0);
+      }
     }
 
     const geometry = new THREE.BoxGeometry(s, s, s);

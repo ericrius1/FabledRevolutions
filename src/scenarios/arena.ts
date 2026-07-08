@@ -157,6 +157,11 @@ export interface ArenaCorridorBounds {
   nearZ: number;
   /** Far edge along −Z. */
   farZ: number;
+  /** Optional decorative road extent behind {@link nearZ} (+Z). The physics slab
+   * and every gameplay bound stop at {@link nearZ}; only a non-colliding backdrop
+   * road quad reaches this far, so the street can extend behind the player
+   * without moving where anything falls off the world. */
+  visualNearZ?: number;
 }
 
 /**
@@ -431,6 +436,33 @@ export function buildArenaEnvironment(
     );
   } else {
     bodies.push(ctx.physics.createGround(FLOOR_HALF));
+  }
+
+  // Decorative road behind the corridor's near edge: extends the street past
+  // where the physics slab stops, so the backdrop city (see CubeBuildings) has
+  // ground under and behind it. No collider — the slab and every gameplay bound
+  // end at corridor.nearZ, so nothing can stand here; it's purely visual.
+  if (
+    corridor &&
+    corridor.visualNearZ != null &&
+    corridor.visualNearZ > corridor.nearZ
+  ) {
+    const apronDepth = corridor.visualNearZ - corridor.nearZ;
+    const apronCenterZ = (corridor.visualNearZ + corridor.nearZ) / 2;
+    const behindApron = new THREE.Mesh(
+      new THREE.PlaneGeometry(
+        floorWidth,
+        apronDepth,
+        Math.max(8, Math.round(floorWidth / 8)),
+        Math.max(2, Math.round(apronDepth / 8)),
+      ),
+      floorMaterial,
+    );
+    behindApron.rotation.x = -Math.PI / 2;
+    behindApron.position.z = apronCenterZ;
+    behindApron.receiveShadow = true;
+    ctx.scene.add(behindApron);
+    objects.push(behindApron);
   }
 
   // No invisible perimeter walls: anything that leaves the physical slab,
