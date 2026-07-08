@@ -279,7 +279,7 @@ export class Player {
   private floorBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
 
   constructor(
-    physics: Physics,
+    private readonly physics: Physics,
     spawn: THREE.Vector2,
     private readonly bus: EventBus,
   ) {
@@ -296,6 +296,11 @@ export class Player {
       mask: PLAYER_MASK,
       verticalMotion: true, // jumping needs the y axis unlocked
     });
+    // Render-interpolate the capsule so fast sprints/jumps don't judder against
+    // the 60 Hz fixed step (see Physics.getInterpolatedPosition). Gameplay reads
+    // the true body position directly; only syncMesh + the follow camera use the
+    // blended one.
+    physics.enableInterpolation(this.body);
 
     // Body capsule.
     const bodyMesh = new THREE.Mesh(
@@ -812,7 +817,9 @@ export class Player {
    * The aim pivot carries whatever part of the aim the body hasn't leaned
    * into, so the sword's rest pose always points exactly along `facing`. */
   syncMesh(): void {
-    this.body.getPosition(this.pos);
+    // Presentation reads the interpolated position so the mesh (and the camera
+    // that follows it) glides between fixed steps instead of snapping per frame.
+    this.physics.getInterpolatedPosition(this.body, this.pos);
     // Body y is the capsule center; at rest it sits at PLAYER_HEIGHT/2, which
     // maps to a group at ground level (y=0). Offset by that so a jump lifts it.
     this.group.position.set(this.pos.x, this.pos.y - PLAYER_HEIGHT / 2, this.pos.z);
@@ -828,6 +835,9 @@ export class Player {
   respawn(spawn: THREE.Vector2): void {
     this.body.setPosition(spawn.x, PLAYER_HEIGHT / 2, spawn.y);
     this.body.setLinearVelocity(0, 0, 0);
+    // Collapse the interpolation snapshots onto the spawn so the first rendered
+    // frame doesn't blend a streak from wherever the body just teleported from.
+    this.physics.resetInterpolation(this.body);
     this.vy = 0;
     this.jumps = 0;
     this.airArc = false;

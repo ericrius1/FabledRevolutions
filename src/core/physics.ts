@@ -224,6 +224,21 @@ export class Physics {
   private accumulator = 0;
   private readonly bodies = new Set<Body>();
 
+  /**
+   * Render-interpolation fraction into the next fixed step, [0,1]. The sim
+   * advances in whole 1/60 chunks but frames render at the display's variable
+   * rate; sampling body positions raw makes fast movers (sprint) judder because
+   * per-frame motion snaps to 0 / 1 / 2 steps. Registered bodies keep prev+curr
+   * snapshots and {@link getInterpolatedPosition} blends them by this alpha so
+   * the rendered transform is smooth regardless of frame rate.
+   */
+  private alpha = 0;
+  private readonly interpolated = new Map<
+    Body,
+    { px: number; py: number; pz: number; cx: number; cy: number; cz: number }
+  >();
+  private readonly interpTmp = { x: 0, y: 0, z: 0 };
+
   private constructor(
     readonly b3: Box3DModule,
     private readonly worldId: b3WorldId,
@@ -318,6 +333,51 @@ export class Physics {
 
   removeBody(body: Body): void {
     if (this.bodies.delete(body)) body.destroy();
+    this.interpolated.delete(body);
+  }
+
+  /**
+   * Register a body for render interpolation. Seeds prev+curr with its current
+   * position so the first blended frame is exact. Call {@link resetInterpolation}
+   * after teleporting the body (respawn) or interpolation will streak across the
+   * jump for one frame.
+   */
+  enableInterpolation(body: Body): void {
+    body.getPosition(this.interpTmp);
+    const p = this.interpTmp;
+    this.interpolated.set(body, {
+      px: p.x, py: p.y, pz: p.z,
+      cx: p.x, cy: p.y, cz: p.z,
+    });
+  }
+
+  /** Collapse a registered body's prev+curr onto its current position (post-teleport). */
+  resetInterpolation(body: Body): void {
+    const s = this.interpolated.get(body);
+    if (!s) return;
+    body.getPosition(this.interpTmp);
+    const p = this.interpTmp;
+    s.px = s.cx = p.x;
+    s.py = s.cy = p.y;
+    s.pz = s.cz = p.z;
+  }
+
+  /**
+   * Position of a registered body blended between its last two fixed steps by
+   * the current {@link alpha}. Falls back to the raw position for unregistered
+   * bodies. Presentation only — gameplay must read the true position via
+   * {@link Body.getPosition}.
+   */
+  getInterpolatedPosition(body: Body, out: { x: number; y: number; z: number }): void {
+    const s = this.interpolated.get(body);
+    if (!s) {
+      body.getPosition(out);
+      return;
+    }
+    const a = this.alpha;
+    out.x = s.px + (s.cx - s.px) * a;
+    out.y = s.py + (s.cy - s.py) * a;
+    out.z = s.pz + (s.cz - s.pz) * a;
   }
 
   /**
@@ -351,10 +411,26 @@ export class Physics {
     // Cap iterations to avoid a spiral of death after a long stall.
     let iterations = 0;
     while (this.accumulator >= FIXED_DT && iterations < 5) {
+      // Snapshot prev = curr before advancing so, after the final iteration,
+      // (prev → curr) spans exactly the most recent 1/60 step for interpolation.
+      for (const s of this.interpolated.values()) {
+        s.px = s.cx;
+        s.py = s.cy;
+        s.pz = s.cz;
+      }
       this.b3.b3World_Step(this.worldId, FIXED_DT, this.subSteps);
+      for (const [body, s] of this.interpolated) {
+        body.getPosition(this.interpTmp);
+        s.cx = this.interpTmp.x;
+        s.cy = this.interpTmp.y;
+        s.cz = this.interpTmp.z;
+      }
       this.accumulator -= FIXED_DT;
       iterations++;
     }
+    // Leftover fraction into the next step. Clamp: after the iteration cap the
+    // accumulator can still exceed FIXED_DT, which must not push alpha past 1.
+    this.alpha = Math.min(this.accumulator / FIXED_DT, 1);
   }
 
   /** Destroy every tracked body and the world. */
