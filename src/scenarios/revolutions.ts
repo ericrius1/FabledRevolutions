@@ -1,6 +1,6 @@
 import * as THREE from "three/webgpu"
 import type { Scenario, ScenarioContext } from "./scenario"
-import { Enemy } from "../game/enemy"
+import { Enemy, type EnemyRole } from "../game/enemy"
 import { CubeBuildings } from "../game/buildings"
 import {
   buildArenaEnvironment,
@@ -70,9 +70,20 @@ const OPENING_ROW_DELAY = 0.035
 const OPENING_STACK_DELAY = 0.18
 /** Hold every staged agent off-screen before the first rank row drops. */
 const OPENING_START_DELAY = 0.75
-const ACTIVE_PRESSER_MIN = 18
-const ACTIVE_PRESSER_MAX = 64
-const ACTIVE_PRESSER_TARGET_FRACTION = 0.13
+// Only a lean engaged pack leaves the ranks at once. The enemy AI hard-caps how
+// many press "right around" the player (MAX_COMMITTED_ATTACKERS = 15); keeping
+// the presser pool just above that means ~15 close in while the rest visibly
+// hang back and prowl, instead of a single 60-strong dogpile.
+const ACTIVE_PRESSER_MIN = 16
+const ACTIVE_PRESSER_MAX = 30
+const ACTIVE_PRESSER_TARGET_FRACTION = 0.06
+/** Role split for street-level agents (ranked → presser). The rest are chasers. */
+const GROUND_THROWER_FRACTION = 0.14
+const GROUND_FLANKER_FRACTION = 0.4
+/** Fraction of upper-tier (balcony/rail) agents that become perched knife
+ * snipers, lobbing down from the railings. The rest stay decorative until
+ * knocked loose. Range-gated in the AI, so only rails near the player fire. */
+const PERCHED_THROWER_FRACTION = 0.16
 const PRESSER_RELEASE_RATE = 10
 const MAX_PRESSER_RELEASES_PER_FRAME = 6
 const PRESSER_RINGS = [
@@ -733,6 +744,14 @@ export class RevolutionsScenario implements Scenario {
   }
 
   private spawnRanked(slot: Slot, opening = false): void {
+    // Upper tiers (balcony/rail) may spawn perched knife snipers; the ground
+    // ranks get the street role split (they later peel off as pressers).
+    const perched = slot.stack >= 1 && Math.random() < PERCHED_THROWER_FRACTION
+    const role: EnemyRole = perched
+      ? "thrower"
+      : slot.stack >= 1
+        ? "chaser"
+        : pickGroundRole()
     const enemy = new Enemy(
       this.ctx.physics,
       new THREE.Vector2(slot.x, slot.z),
@@ -742,7 +761,10 @@ export class RevolutionsScenario implements Scenario {
         hp: 1,
         separation: 1.1,
         standoff: 4.5,
-        visualDetail: "crowd"
+        visualDetail: "crowd",
+        role,
+        perched,
+        bus: this.ctx.bus
       }
     )
     slot.enemy = enemy
@@ -756,6 +778,9 @@ export class RevolutionsScenario implements Scenario {
       slot.holdPosition,
       FLY_IN_DURATION
     )
+    // A rail sniper stays on its ledge with no street-level collider — it's up
+    // on the railing, not a phantom body against the facade.
+    if (perched) enemy.setRankDecorative(true)
     this.syncEnemyPresentation(enemy)
   }
 
@@ -789,7 +814,9 @@ export class RevolutionsScenario implements Scenario {
         hp: 1,
         separation: 1.4,
         standoff: standoff ?? this.nextPresserStandoff(),
-        visualDetail
+        visualDetail,
+        role: pickGroundRole(),
+        bus: this.ctx.bus
       }
     )
     this.ctx.scene.add(enemy.group)
@@ -999,6 +1026,8 @@ export class RevolutionsScenario implements Scenario {
         enemy.setPresentationYOffset(arrival.targetY)
         enemy.setMovementLocked(arrival.holdAfter)
         this.arrivals.delete(enemy)
+        // A rail sniper settled on its ledge — let it start lobbing.
+        if (enemy.isPerchThrower) enemy.armPerch()
         landingCount++
         landingX += enemy.position.x
         landingY += arrival.targetY
@@ -1222,4 +1251,13 @@ function saveTarget(target: number): void {
   } catch {
     // ignore
   }
+}
+
+/** Weighted role for a street-level agent: a few ranged skirmishers, a chunk of
+ * circling flankers, the rest straight-in chasers. */
+function pickGroundRole(): EnemyRole {
+  const r = Math.random()
+  if (r < GROUND_THROWER_FRACTION) return "thrower"
+  if (r < GROUND_THROWER_FRACTION + GROUND_FLANKER_FRACTION) return "flanker"
+  return "chaser"
 }

@@ -6,6 +6,7 @@ import { Health } from "./health"
 import type { Player } from "./player"
 import { enemyShockOffset } from "../effects/groundShockwave"
 import type { EnemySpatialIndex } from "./enemySpatialIndex"
+import type { EventBus } from "../core/events"
 
 const ENEMY_HEIGHT = 1.7
 const ENEMY_RADIUS = 0.5
@@ -82,8 +83,43 @@ const PERCH_HOP_OUT = 2.2
  * weave sideways on approach so the mob arrives on curves, not rails.
  */
 const FLANKER_FRACTION = 0.45
-const ORBIT_RADIUS_MIN = 3.5
-const ORBIT_RADIUS_MAX = 7.5
+/** Uncommitted melee hover here — pulled back from the melee scrum so the crowd
+ * that can't get a slot visibly hangs back and circles instead of clumping. */
+const ORBIT_RADIUS_MIN = 5.5
+const ORBIT_RADIUS_MAX = 9.5
+/**
+ * Only this many agents may press "right around" the player at once. Melee
+ * agents claim one of these slots to close to melee range; everyone else holds
+ * their orbit ring and waits for one to free up (a slot opens the moment its
+ * holder dies, is knocked clear, or is culled). Throwers never take a slot.
+ */
+const MAX_COMMITTED_ATTACKERS = 15
+/** A melee agent may claim a slot while within this of the player. Wider than
+ * the orbit band so waiters stay eligible and pounce the instant one frees. */
+const COMMIT_TRY_RADIUS = 11
+/** A slot-holder knocked/steered past this has lost the player; it frees the
+ * slot for a closer agent. */
+const COMMIT_RELEASE_RADIUS = 13
+/** Sideways bias (fraction of forward) folded into each role's steering. */
+const CHASER_COMMITTED_TANGENT = 0.15
+const CHASER_WAITING_TANGENT = 0.55
+const FLANKER_COMMITTED_TANGENT = 0.55
+const FLANKER_WAITING_TANGENT = 0.95
+
+// ---- Ranged "thrower" role ----
+/** Preferred hold distance for a ground knife-thrower (metres). */
+const THROWER_STANDOFF = 12
+/** Sideways strafe bias for a thrower holding its distance. */
+const THROWER_STRAFE = 0.5
+/** Shoulder height a knife launches from, above the agent's foot origin. */
+const THROWER_SHOULDER_Y = 1.4
+/** A thrower only lobs while the player sits in this horizontal band. Reaches
+ * across the corridor so rail snipers threaten a mid-street player (facades sit
+ * ~20 m off centre), while distant down-street perches stay quiet. */
+const THROW_RANGE_MIN = 4
+const THROW_RANGE_MAX = 26
+const THROW_INTERVAL_MIN = 2.4
+const THROW_INTERVAL_MAX = 4.4
 /** How hard a flanker corrects toward its preferred ring (per meter of error). */
 const ORBIT_RADIAL_GAIN = 0.6
 const LUNGE_INTERVAL_MIN = 2
@@ -465,6 +501,16 @@ class EnemyVisualBatches {
   }
 }
 
+/**
+ * Engagement behaviour, chosen at spawn:
+ *  - `chaser`   — presses straight in (weaves on approach).
+ *  - `flanker`  — circles on a personal ring and darts in on a timer.
+ *  - `thrower`  — hangs back at range and hurls knives; never joins the scrum.
+ * Chasers and flankers compete for the limited melee slots (see
+ * {@link MAX_COMMITTED_ATTACKERS}); losers hover and wait.
+ */
+export type EnemyRole = "chaser" | "flanker" | "thrower"
+
 export interface EnemyConfig {
   seekSpeed?: number
   separation?: number
@@ -480,6 +526,13 @@ export interface EnemyConfig {
    * both easier on the physics broadphase and better-looking on release.
    */
   standoff?: number
+  /** Engagement role. Defaults to a random chaser/flanker split (legacy). */
+  role?: EnemyRole
+  /** Marks a thrower that stays perched on its spawn slot (a rail sniper) and
+   * lobs from height rather than skirmishing on the ground. */
+  perched?: boolean
+  /** Event bus so a thrower can announce a knife throw. Ranged roles need it. */
+  bus?: EventBus
 }
 
 /**
@@ -512,8 +565,18 @@ export class Enemy {
   private readonly seekSpeed: number
   private readonly separation: number
   private standoff: number
-  /** Role assigned at spawn: flankers orbit and dart in; chasers press in. */
-  private readonly flanker = Math.random() < FLANKER_FRACTION
+  /** Role assigned at spawn (see {@link EnemyRole}). Set in the constructor. */
+  private readonly role: EnemyRole
+  /** True for a thrower that holds its rail perch (movement-locked) and lobs
+   * from height. Armed by the scenario once it settles (see {@link armPerch}). */
+  private readonly perched: boolean
+  private perchArmed = false
+  /** Countdown to the next knife (throwers only). */
+  private throwTimer = Math.random() * THROW_INTERVAL_MAX
+  /** Bus for announcing knife throws; null for non-ranged / test enemies. */
+  private readonly bus: EventBus | null
+  /** Holds one of the {@link MAX_COMMITTED_ATTACKERS} melee slots this frame. */
+  private hasCommit = false
   private orbitDir = Math.random() < 0.5 ? 1 : -1
   private readonly orbitRadius =
     ORBIT_RADIUS_MIN + Math.random() * (ORBIT_RADIUS_MAX - ORBIT_RADIUS_MIN)
@@ -554,6 +617,10 @@ export class Enemy {
     this.seekSpeed = config.seekSpeed ?? 6.4
     this.separation = config.separation ?? 1.4
     this.standoff = config.standoff ?? 0
+    this.role =
+      config.role ?? (Math.random() < FLANKER_FRACTION ? "flanker" : "chaser")
+    this.perched = config.perched ?? false
+    this.bus = config.bus ?? null
     this.health = new Health(config.hp ?? ENEMY_HP)
     const fullDetail = (config.visualDetail ?? "full") === "full"
 
@@ -677,6 +744,8 @@ export class Enemy {
   setMovementLocked(locked: boolean): void {
     this.movementLocked = locked
     if (locked) {
+      // A held/staged agent isn't crowding the player — free its melee slot.
+      this.releaseCommit()
       if (!this.holdLane) {
         this.body.getPosition(this.pos)
         this.holdLane = { x: this.pos.x, z: this.pos.z }
@@ -703,6 +772,18 @@ export class Enemy {
   /** Retune the engagement shell when a scenario promotes a reserve into the fight. */
   setStandoff(standoff: number): void {
     this.standoff = Math.max(0, standoff)
+  }
+
+  /** True for a rail-perched knife thrower; the scenario keeps these locked on
+   * their ledge instead of releasing them into the melee. */
+  get isPerchThrower(): boolean {
+    return this.role === "thrower" && this.perched
+  }
+
+  /** Scenario hook: a perched sniper has settled on its rail and may begin
+   * lobbing. Kept off during the fly-in so knives don't rain before it lands. */
+  armPerch(): void {
+    this.perchArmed = true
   }
 
   /**
@@ -740,6 +821,8 @@ export class Enemy {
     this.stunTimer = STUN_DURATION + power * STUN_PER_POWER
     if (!this.launched) {
       this.launched = true
+      // Knocked clear: give up the melee slot so a waiting agent can step in.
+      this.releaseCommit()
       // Turn a ledge perch into a real fall before anything else clears the
       // offset, so the body drops from rail height instead of the mesh
       // teleporting to the floor.
@@ -783,6 +866,54 @@ export class Enemy {
     this.bulletOn = false
   }
 
+  /** Melee agents pressing "right around" the player across all enemies. */
+  private static committedCount = 0
+
+  /**
+   * Try to hold one of the limited melee slots this frame. A holder keeps its
+   * slot (pressing to melee) until it drifts past the release radius; a
+   * non-holder claims a free slot only once close enough to matter. Returns
+   * whether this enemy is committed after the call.
+   */
+  private updateCommit(dist: number): boolean {
+    if (this.hasCommit) {
+      if (dist > COMMIT_RELEASE_RADIUS) this.releaseCommit()
+      return this.hasCommit
+    }
+    if (dist > COMMIT_TRY_RADIUS) return false
+    if (Enemy.committedCount >= MAX_COMMITTED_ATTACKERS) return false
+    Enemy.committedCount++
+    this.hasCommit = true
+    return true
+  }
+
+  private releaseCommit(): void {
+    if (!this.hasCommit) return
+    Enemy.committedCount = Math.max(0, Enemy.committedCount - 1)
+    this.hasCommit = false
+  }
+
+  /**
+   * Tick a thrower's reload and lob a knife when the player sits in range. The
+   * knife itself (flight, aim, hit) is owned by the KnifeSystem; this only
+   * announces the launch point. `perched` throwers fire from their rail height.
+   */
+  private tickThrow(dt: number, dist: number, perched: boolean): void {
+    if (!this.bus) return
+    this.throwTimer -= dt
+    if (this.throwTimer > 0) return
+    if (dist < THROW_RANGE_MIN || dist > THROW_RANGE_MAX) {
+      this.throwTimer = 0.35 // out of range — re-check shortly, don't waste the reload
+      return
+    }
+    this.throwTimer =
+      THROW_INTERVAL_MIN + Math.random() * (THROW_INTERVAL_MAX - THROW_INTERVAL_MIN)
+    const originY = (perched ? this.presentationYOffset : 0) + THROWER_SHOULDER_Y
+    this.bus.emit("enemy-throw", {
+      origin: new THREE.Vector3(this.position.x, originY, this.position.z)
+    })
+  }
+
   /**
    * Core-gameplay death: mark dead, free the rotation locks, and tip the body
    * over in the hit direction. This lives here (not in an effect) so enemies
@@ -792,6 +923,7 @@ export class Enemy {
   die(dir: THREE.Vector3, power = 10): void {
     this.dead = true
     this.launched = true
+    this.releaseCommit()
     this.downedTimer = 0
     this.downedSettledTimer = 0
     // A killed perch agent should fall from the ledge too (no-op if stagger
@@ -950,6 +1082,7 @@ export class Enemy {
    */
   park(): void {
     this.parked = true
+    this.releaseCommit()
     this.group.position.set(0, -1000, 0)
   }
 
@@ -961,6 +1094,9 @@ export class Enemy {
    * material are module-shared across all enemies.
    */
   dispose(): void {
+    // Free both global budgets so a scenario switch mid-fight doesn't leak a
+    // melee slot or a CCD "bullet" count into the next round.
+    this.releaseCommit()
     // Return this body's CCD slot to the global budget — scenario switches
     // dispose enemies mid-flight, and a leaked count would starve future launches.
     if (this.body.isDestroyed) this.releaseBulletBudget()
@@ -996,7 +1132,13 @@ export class Enemy {
       this.snapHoldLane()
       this.toPlayer.copy(player.position).sub(this.position)
       this.toPlayer.y = 0
-      if (this.toPlayer.lengthSq() > 0.0001) this.toPlayer.normalize()
+      const perchDist = this.toPlayer.length()
+      if (perchDist > 0.0001) this.toPlayer.normalize()
+      // A settled rail sniper keeps facing the player (syncMesh reads toPlayer)
+      // and lobs knives down at him even though it never leaves its perch.
+      if (this.isPerchThrower && this.perchArmed) {
+        this.tickThrow(dt, perchDist, true)
+      }
       return false
     }
 
@@ -1027,48 +1169,79 @@ export class Enemy {
       let vx = 0
       let vz = 0
 
-      if (this.flanker && this.lungeTime > 0) {
-        // Dart straight in, faster than a normal chase; break off on contact.
-        this.lungeTime -= dt
-        vx = px * speed * LUNGE_SPEED_MULT
-        vz = pz * speed * LUNGE_SPEED_MULT
-        if (dist <= TOUCH_DAMAGE_RANGE) this.lungeTime = 0
-      } else if (this.flanker) {
-        this.lungeCooldown -= dt
-        if (this.lungeCooldown <= 0) {
-          this.lungeTime = LUNGE_DURATION
-          this.lungeCooldown =
-            LUNGE_INTERVAL_MIN +
-            Math.random() * (LUNGE_INTERVAL_MAX - LUNGE_INTERVAL_MIN)
-          if (Math.random() < ORBIT_FLIP_CHANCE) this.orbitDir *= -1
-        }
-        // Circle the player: mostly tangent motion with a radial correction
-        // toward the preferred ring. Far away this blends into a curved,
-        // spiraling approach instead of a beeline.
+      if (this.role === "thrower") {
+        // Ranged skirmisher: hold at throwing distance, strafe sideways, and
+        // lob knives on a timer. Never joins the melee scrum around the player.
+        this.tickThrow(dt, dist, false)
         const radial = THREE.MathUtils.clamp(
-          (dist - this.orbitRadius) * ORBIT_RADIAL_GAIN,
+          (dist - THROWER_STANDOFF) * ORBIT_RADIAL_GAIN,
           -1,
           1
         )
-        const dx = px * radial + tx
-        const dz = pz * radial + tz
+        const dx = px * radial + tx * THROWER_STRAFE
+        const dz = pz * radial + tz * THROWER_STRAFE
         const len = Math.hypot(dx, dz) || 1
         vx = (dx / len) * speed
         vz = (dz / len) * speed
-      } else if (dist > this.standoff) {
-        // Chaser: advance only while outside the preferred ring; inside it,
-        // hold and let separation shuffle the line. Weave sideways on the way
-        // in so the pack converges on curves rather than straight rails.
-        const weave =
-          dist > 2.5
-            ? Math.sin(this.aiTime * this.weaveFreq + this.weavePhase) *
+      } else {
+        // Melee: compete for one of the limited slots "right around" the
+        // player. A slot-holder presses to its standoff; everyone else hovers
+        // at its (wider) orbit ring and circles — the crowd that hangs back.
+        const committed = this.updateCommit(dist)
+
+        if (committed && this.role === "flanker" && this.lungeTime > 0) {
+          // Dart straight in, faster than a normal chase; break off on contact.
+          this.lungeTime -= dt
+          vx = px * speed * LUNGE_SPEED_MULT
+          vz = pz * speed * LUNGE_SPEED_MULT
+          if (dist <= TOUCH_DAMAGE_RANGE) this.lungeTime = 0
+        } else {
+          if (this.role === "flanker") {
+            this.lungeCooldown -= dt
+            // Only a committed flanker may dart to contact; an uncommitted one
+            // just keeps circling wide while it waits for a slot.
+            if (committed && this.lungeCooldown <= 0) {
+              this.lungeTime = LUNGE_DURATION
+              this.lungeCooldown =
+                LUNGE_INTERVAL_MIN +
+                Math.random() * (LUNGE_INTERVAL_MAX - LUNGE_INTERVAL_MIN)
+              if (Math.random() < ORBIT_FLIP_CHANCE) this.orbitDir *= -1
+            }
+          }
+
+          // Ring to steer toward: the tight melee standoff once committed, else
+          // the enemy's wider personal orbit ring (it hangs back and prowls).
+          const ring = committed ? this.standoff : this.orbitRadius
+          const radial = THREE.MathUtils.clamp(
+            (dist - ring) * ORBIT_RADIAL_GAIN,
+            -1,
+            1
+          )
+          // Chasers press mostly straight in when committed; flankers always
+          // circle; uncommitted melee circle enough that the wait ring reads as
+          // a prowling crowd rather than a frozen wall.
+          const tangentWeight =
+            this.role === "flanker"
+              ? committed
+                ? FLANKER_COMMITTED_TANGENT
+                : FLANKER_WAITING_TANGENT
+              : committed
+                ? CHASER_COMMITTED_TANGENT
+                : CHASER_WAITING_TANGENT
+          let dx = px * radial + tx * tangentWeight
+          let dz = pz * radial + tz * tangentWeight
+          // Chasers weave sideways on approach so the pack arrives on curves.
+          if (this.role === "chaser" && dist > 2.5) {
+            const weave =
+              Math.sin(this.aiTime * this.weaveFreq + this.weavePhase) *
               WEAVE_STRENGTH
-            : 0
-        const dx = px + tx * weave
-        const dz = pz + tz * weave
-        const len = Math.hypot(dx, dz) || 1
-        vx = (dx / len) * speed
-        vz = (dz / len) * speed
+            dx += tx * weave
+            dz += tz * weave
+          }
+          const len = Math.hypot(dx, dz) || 1
+          vx = (dx / len) * speed
+          vz = (dz / len) * speed
+        }
       }
       // Separation only needs local neighbors. The optional frame grid keeps
       // horde-scale crowds from scanning almost every far-away pair.

@@ -8,6 +8,7 @@ import { Input } from "./core/input"
 import { Player, wallKickTuningParams } from "./game/player"
 import { Enemy } from "./game/enemy"
 import { EnemySpatialIndex } from "./game/enemySpatialIndex"
+import { KnifeSystem } from "./game/projectile"
 import { Combat, combatTuningParams } from "./game/combat"
 import { MegaSystem } from "./game/mega"
 import { DiveSmash } from "./game/diveSmash"
@@ -56,8 +57,10 @@ const SHOCK_WAVE_SPIN = 4
 const SHOCK_WAVE_LIGHTNING_SCALE = 0.6
 /** Above this strength the wave blows even scenario-held rank agents loose. */
 const SHOCK_WAVE_UNLOCK_STRENGTH = 0.5
-/** Below this body height the player has fallen clear of the floor slab. */
-const PLAYER_FALL_DEATH_Y = -8
+/** Below this body height the player is dead and the round restarts. Set deep so
+ * a miss off the edge is a long ~100 m plunge into the void before the reset,
+ * not an instant blink out at the floor line. */
+const PLAYER_FALL_DEATH_Y = -100
 
 /** Dossier tabs that a shared link may deep-link into (see infoModal.ts). */
 const INFO_TABS = ["visual", "audio"] as const
@@ -189,6 +192,23 @@ async function boot(): Promise<void> {
   // Reused across shock-front queries to avoid per-front allocation.
   const shockFrontScratch: Enemy[] = []
 
+  // Thrown-knife pool for ranged agents (rail snipers + ground skirmishers).
+  const knives = new KnifeSystem(scene)
+  const knifeTarget = new THREE.Vector3()
+  const knifeAim = { x: 0, y: 0, z: 0 }
+  const knifeVel = { x: 0, y: 0, z: 0 }
+  const knifeHitCenter = new THREE.Vector3()
+  // A ranged agent lobbed a blade: launch it from the announced origin toward
+  // the player, leading his live velocity. The hit lands later, in the loop.
+  bus.on("enemy-throw", ({ origin }) => {
+    player.body.getPosition(knifeAim)
+    player.body.getLinearVelocity(knifeVel)
+    knifeTarget.set(knifeAim.x, knifeAim.y, knifeAim.z)
+    knives.throw(origin, knifeTarget, knifeVel)
+  })
+  // In-flight knives are meaningless after a death/respawn or scenario switch.
+  bus.on("player-death", () => knives.reset())
+
   const combat = new Combat(bus)
   player.combat = combat
   const mega = new MegaSystem(bus, clock, physics, combat)
@@ -258,6 +278,7 @@ async function boot(): Promise<void> {
   let scenario: Scenario
   const loadScenario = (id: string): void => {
     if (scenario) scenario.dispose()
+    knives.reset()
     scenario = getScenarioEntry(id).create()
     // Clear any wall-kick facades from the previous scenario; the new one
     // re-registers its own during setup (only Revolutions has buildings).
@@ -448,7 +469,7 @@ async function boot(): Promise<void> {
       for (const enemy of enemies) {
         const inRange = enemy.update(scaledDt, player, enemies, enemyIndex)
         if (inRange && !enemy.dead) {
-          applyTouchDamage(enemy)
+          damagePlayerFrom(enemy.position.x, enemy.position.z)
         }
       }
 
@@ -464,6 +485,15 @@ async function boot(): Promise<void> {
       physics.step(scaledDt)
       player.body.getPosition(playerFallPos)
       if (playerFallPos.y < PLAYER_FALL_DEATH_Y) restartCurrentScenario()
+
+      // Fly the thrown knives against the freshly-stepped player position;
+      // scaledDt so they crawl through bullet time with everything else. A
+      // knife reaching the player runs the same shield→hearts damage path as a
+      // touch, sourced from where the blade struck.
+      knifeHitCenter.set(playerFallPos.x, playerFallPos.y, playerFallPos.z)
+      knives.update(scaledDt, knifeHitCenter, (knifePos) =>
+        damagePlayerFrom(knifePos.x, knifePos.z)
+      )
     }
 
     // Presentation sync runs while paused so staged fly-ins stay off-screen.
@@ -606,16 +636,23 @@ async function boot(): Promise<void> {
     }
   }
 
-  function applyTouchDamage(enemy: import("./game/enemy").Enemy): void {
+  /**
+   * Run an incoming hit against the player from a source position on the XZ
+   * plane — shared by enemy touches and thrown knives. Drains the shield first,
+   * then hearts (i-frame gated), shoving the player away from the source.
+   */
+  function damagePlayerFrom(sourceX: number, sourceZ: number): void {
     const shieldState = player.shield.hit()
     // On its per-hit cooldown — this contact does nothing.
     if (shieldState === "blocked") return
 
-    const dir = new THREE.Vector3()
-      .copy(player.position)
-      .sub(enemy.position)
-      .setY(0)
-      .normalize()
+    const dir = new THREE.Vector3(
+      player.position.x - sourceX,
+      0,
+      player.position.z - sourceZ
+    )
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1)
+    else dir.normalize()
     const point = player.position.clone().setY(1)
 
     // Shield ate it: shove the player back, flash the meter, keep hearts intact.
