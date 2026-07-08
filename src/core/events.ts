@@ -52,6 +52,10 @@ export interface GameEventMap {
   /** Player wall-kicked off a building facade. A subtle ripple radiates from
    * `origin` on the wall; `speed` scales its reach. */
   "wall-jump": { origin: THREE.Vector3; speed: number };
+  /** A jump arc touched down firmly (NOT a dive smash — that fires `dive-impact`
+   * with its own impact boom). `speed` is the downward impact speed (m/s) so the
+   * footfall thud can scale with how hard the landing hit. */
+  "land": { speed: number };
   /** The max-charge dive slammed home — the ground-smash spectacle: impact
    * bullet time plus a mega lightning storm in its own warmer molten palette.
    * `power` scales the blast, `origin` is the impact point. Fires alongside the

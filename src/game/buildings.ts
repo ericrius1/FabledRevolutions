@@ -408,7 +408,10 @@ export class CubeBuildings {
           );
           this.towers.push({ sign: side, zMin: zc - hz, zMax: zc + hz, top: towerMaxH * s });
         }
-        iz = zEnd + (Math.random() < 0.35 ? 1 : 0);
+        // Towers tile edge-to-edge: NO gap between them. A gap here is a hole in
+        // the collider wall the player wall-kicks through, slips behind the
+        // facade, and falls off the (facade-aligned) floor into the void.
+        iz = zEnd;
       }
     };
 
@@ -557,20 +560,22 @@ function buildCubeMaterial(s: number, litFraction: number): THREE.MeshStandardNo
   const sideX = ax.x.greaterThan(0.5);
   const isSide = sideX.or(ax.z.greaterThan(0.5));
 
-  // Face-plane coordinates (u across, v up). One big window per cube face
-  // (pitch s both ways), still a touch wider than tall, so each window is huge —
-  // the room and its monitor read easily. Pitch = cube size, so a window never
-  // straddles two cells (which would tear the interior mapping).
+  // Face-plane coordinates (u across, v up). Wide ribbon windows: one bay spans
+  // THREE cube faces across (pitch 3s) but only one up (pitch s), so each window
+  // is a long horizontal strip. Interior mapping stays per-cube (cell = floor,
+  // below), so a wide window honestly shows the three separate rooms behind it —
+  // each parallaxing on its own, reading as an open-plan floor rather than one box.
   const faceU = select(sideX, pos.z, pos.x);
-  const bayW = s;
+  const bayW = s * 3;
   const bayH = s;
   const wu = faceU.div(bayW).fract();
   const wv = pos.y.div(bayH).fract();
+  // Near-full-bay glass, slim concrete mullions between the wide strips.
   const inWin = wu
-    .greaterThan(0.08)
-    .and(wu.lessThan(0.92))
-    .and(wv.greaterThan(0.17))
-    .and(wv.lessThan(0.83));
+    .greaterThan(0.06)
+    .and(wu.lessThan(0.94))
+    .and(wv.greaterThan(0.1))
+    .and(wv.lessThan(0.9));
   const glass = isSide.and(inWin);
 
   // The cube cell this texel belongs to, nudged inward off the boundary plane.

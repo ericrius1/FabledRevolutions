@@ -35,6 +35,8 @@ function saveVolume(value: number): void {
  *                     generated convolver reverb and a feedback echo
  *   - thunder:        crackling discharge + rolling low thunder per lightning
  *                     strike (aftermath)
+ *   - land thud:      soft footfall thump + scuff when a jump touches down
+ *   - wall kick:      springy push-off whoosh + foot-plant tok off a facade
  *   - agent landings: grouped concrete crash when fly-in ranks slam down
  *
  * Browsers block audio until a user gesture, so the AudioContext is created
@@ -92,6 +94,7 @@ export class SoundEffect extends BaseEffect {
   private lastArrivalCrash = -1;
   private lastThunderRoll = -1;
   private lastThunderClap = -1;
+  private lastLand = -1;
 
   init(ctx: EffectContext): void {
     super.init(ctx);
@@ -122,6 +125,8 @@ export class SoundEffect extends BaseEffect {
     });
     ctx.bus.on("dive-start", ({ mega }) => this.enabled && this.diveDescend(mega));
     ctx.bus.on("dive-impact", ({ mega }) => this.enabled && this.diveImpact(mega));
+    ctx.bus.on("land", ({ speed }) => this.enabled && this.land(speed));
+    ctx.bus.on("wall-jump", () => this.enabled && this.wallKick());
     ctx.bus.on("mega-armed", () => this.enabled && this.megaArmedCharge());
     ctx.bus.on("mega-release", () => this.enabled && this.megaBlast());
     // The ground smash lands the same deep mega boom on top of its dive impact.
@@ -974,6 +979,101 @@ export class SoundEffect extends BaseEffect {
     this.sendVerb(cGain, 0.9);
     crack.start(t);
     crack.stop(t + 0.4 * stretch);
+  }
+
+  /**
+   * Jump touchdown: a soft body thud + a short front-edge scuff (boots/dust on
+   * impact). Deliberately LIGHT — nothing like the dive-smash boom. `speed` is
+   * the downward impact speed; a hard drop off a rooftop lands a hair lower,
+   * louder, and grittier than a short hop. Rate-limited so a bounced landing
+   * on flaky ground contacts can't stack.
+   */
+  private land(speed: number): void {
+    if (!this.audio || !this.master || !this.noiseBuffer) return;
+    const t = this.now();
+    if (t - this.lastLand < 0.08) return;
+    this.lastLand = t;
+    const r = this.timeRate();
+    const stretch = 1 / Math.max(0.5, r);
+    // 0 = soft tap (~short hop), 1 = hard slam (long fall). JUMP_SPEED is 42, so
+    // a full-apex landing sits near the top of the range.
+    const s = Math.max(0, Math.min(1, (speed - 8) / 34));
+
+    // Body thud: a short low sine drop — the weight hitting the floor. Lower and
+    // near-dry so it reads as a grounded stomp, not a cheesy echoey blip.
+    const thud = this.audio.createOscillator();
+    thud.type = "sine";
+    thud.frequency.setValueAtTime((104 - s * 22) * r, t);
+    thud.frequency.exponentialRampToValueAtTime((40 - s * 10) * r, t + 0.11 * stretch);
+    const thudGain = this.audio.createGain();
+    thudGain.gain.setValueAtTime(0.0001, t);
+    thudGain.gain.exponentialRampToValueAtTime(0.32 + s * 0.42, t + 0.008 * stretch);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, t + (0.16 + s * 0.1) * stretch);
+    thud.connect(thudGain).connect(this.master);
+    this.sendVerb(thudGain, 0.06 + s * 0.08);
+    thud.start(t);
+    thud.stop(t + (0.2 + s * 0.1) * stretch);
+
+    // Front-edge scuff: a short low-passed noise tick — the feet/dust. Kept dull
+    // and quiet; only the harder landings bring much grit.
+    const scuff = this.audio.createBufferSource();
+    scuff.buffer = this.noiseBuffer;
+    scuff.playbackRate.value = (0.7 + 0.35 * s) * r;
+    const bp = this.audio.createBiquadFilter();
+    bp.type = "lowpass";
+    bp.frequency.value = (520 + s * 480) * (0.75 + 0.25 * r);
+    bp.Q.value = 0.7;
+    const scuffGain = this.audio.createGain();
+    scuffGain.gain.setValueAtTime(0.0001, t);
+    scuffGain.gain.exponentialRampToValueAtTime(0.07 + s * 0.18, t + 0.004 * stretch);
+    scuffGain.gain.exponentialRampToValueAtTime(0.001, t + (0.05 + s * 0.05) * stretch);
+    scuff.connect(bp).connect(scuffGain).connect(this.master);
+    this.sendVerb(scuffGain, 0.04);
+    scuff.start(t);
+    scuff.stop(t + 0.12 * stretch);
+  }
+
+  /**
+   * Wall-kick push-off: a foot-plant "tok" on the concrete plus a short noise
+   * whoosh sweeping UP — the spring launching you back off the facade. Punchy
+   * and brief so it reads as a bounce, not a combat hit.
+   */
+  private wallKick(): void {
+    if (!this.audio || !this.master || !this.noiseBuffer) return;
+    const t = this.now();
+    const r = this.timeRate();
+    const stretch = 1 / Math.max(0.5, r);
+
+    // Foot plant on concrete: a short mid "tok".
+    const tok = this.audio.createOscillator();
+    tok.type = "triangle";
+    tok.frequency.setValueAtTime(300 * r, t);
+    tok.frequency.exponentialRampToValueAtTime(90 * r, t + 0.06 * stretch);
+    const tokGain = this.audio.createGain();
+    tokGain.gain.setValueAtTime(0.5, t);
+    tokGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1 * stretch);
+    tok.connect(tokGain).connect(this.master);
+    this.sendVerb(tokGain, 0.3);
+    tok.start(t);
+    tok.stop(t + 0.12 * stretch);
+
+    // Push-off whoosh: filtered noise sweeping up as you spring away.
+    const src = this.audio.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.playbackRate.value = r;
+    const bp = this.audio.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(700 * r, t);
+    bp.frequency.exponentialRampToValueAtTime(2600 * r, t + 0.14 * stretch);
+    bp.Q.value = 1.1;
+    const gain = this.audio.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.4, t + 0.015 * stretch);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16 * stretch);
+    src.connect(bp).connect(gain).connect(this.master);
+    this.sendVerb(gain, 0.35);
+    src.start(t);
+    src.stop(t + 0.18 * stretch);
   }
 
   /**

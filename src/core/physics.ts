@@ -232,7 +232,7 @@ export class Physics {
   static async create(): Promise<Physics> {
     const b3 = await Box3DFactory();
     const worldDef = b3.b3DefaultWorldDef();
-    worldDef.gravity = { x: 0, y: -20, z: 0 } as b3Vec3;
+    worldDef.gravity = { x: 0, y: -26, z: 0 } as b3Vec3;
     // Swept (continuous) collision for bullet bodies — knockback launches are
     // fast enough to tunnel a discrete step through the ground slab.
     worldDef.enableContinuous = true;

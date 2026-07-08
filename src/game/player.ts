@@ -438,6 +438,15 @@ export class Player {
       // Only end the jump arc on a firm landing — a flaky ground contact mid-air
       // must not reset jumps and open a charged release into a spin.
       if (this.isFirmlyOnGround(bodyY, this.vy, dt)) {
+        // Firm touchdown out of a jump arc gets a footfall thud. A dive smash
+        // already owns its impact with `dive-impact` (a full boom), so exclude
+        // it. `airArc` is set only by a real jump/wall-kick, so a plain walk
+        // stays silent. Impact speed scales the thud.
+        if (this.airArc && !this.smashing) {
+          this.bus.emit("land", {
+            speed: Math.max(-this.vy, Math.abs(this.bodyVel.y)),
+          });
+        }
         this.airArc = false;
         this.jumps = 0;
       }

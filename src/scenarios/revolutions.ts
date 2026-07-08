@@ -60,8 +60,11 @@ const RAIL_POST_SIZE = 0.11
 const RAIL_POST_SPACING = 4
 /** Deck extends this far past the outermost row toward the street. */
 const DECK_OUTER_MARGIN = 0.55
-const LEDGE_MIN_HEIGHT = 4.1
-const LEDGE_FLOOR_HEIGHT = 1.45
+const LEDGE_MIN_HEIGHT = 6
+/** Tier spacing in cube-heights. Integer so rail decks land on cube (window)
+ * boundaries and sit in the concrete band between window rows, not across glass;
+ * bumped 1.45→2 to spread the levels apart and give the taller windows room. */
+const LEDGE_FLOOR_HEIGHT = 2
 const FLY_IN_HEIGHT = 55
 const FLY_IN_RANDOM_HEIGHT = 12
 const FLY_IN_DURATION = 0.8
@@ -108,10 +111,13 @@ const OPENING_NEAR_Z = 6
  * permanent kill. Set deep (~1000 m) so bodies plunge a long, visible way into
  * the void before they vanish, rather than blinking out at the floor edge. */
 const FALL_KILL_Y = -1000
-/** Below this Y a body has cleared the arena edge and is unrecoverable (nothing
- * to catch it before FALL_KILL_Y). "Enemies left" ticks down here — the instant
- * it drops below the floor — not way down at FALL_KILL_Y when it finally vanishes. */
-const FALL_COUNT_Y = -2
+/** Y line, just below the floor top (y=0), at which a body that is ALSO off the
+ * slab footprint counts as knocked off the world. "Enemies left" ticks down here
+ * — the instant it drops past the floor — not way down at FALL_KILL_Y when it
+ * finally vanishes. The off-slab check (see cullFallenEnemies) is the real guard;
+ * this Y just confirms it has started to drop, so a body punched briefly below
+ * the slab top by a hard hit but still over the road is never miscounted. */
+const FALL_COUNT_Y = -0.5
 
 const PREFIX = "fabled-revolutions.revolutions."
 const SETTINGS_SCHEMA_KEY = `${PREFIX}settings-schema`
@@ -723,18 +729,27 @@ export class RevolutionsScenario implements Scenario {
    * These are the only real kills: removed for good (no respawn), counted
    * toward the win. Iterates back-to-front so splices don't skip entries.
    *
-   * Counting and culling are split: a body is tallied the instant it clears the
-   * arena edge (FALL_COUNT_Y) so "enemies left" drops immediately, but it isn't
-   * disposed until it plunges to FALL_KILL_Y — so the falling body stays visible.
+   * Counting and culling are split: a body is tallied the instant it is off the
+   * slab AND below the floor (FALL_COUNT_Y) so "enemies left" drops the moment it
+   * leaves the world, but it isn't disposed until it plunges to FALL_KILL_Y — so
+   * the falling body stays visible on its way down.
    */
   private cullFallenEnemies(): void {
+    // Slab footprint: a body outside this in X/Z has nothing under it, so once
+    // it also drops below the floor it can only keep falling — a permanent kill.
+    const b = this.corridorBounds()
     let fell = false
     for (let i = this.liveEnemies.length - 1; i >= 0; i--) {
       const enemy = this.liveEnemies[i]
       enemy.body.getPosition(this.velScratch)
-      const y = this.velScratch.y
-      // Off the edge = unrecoverable. Tally once, right away.
-      if (y <= FALL_COUNT_Y && !this.countedFallen.has(enemy)) {
+      const { x, y, z } = this.velScratch
+      // Tally the instant a body clears the slab AND dips below the floor —
+      // "enemies left" drops right away, long before the body plunges out of
+      // sight. Gating on being off the footprint (not just a deep Y) means a
+      // hard hit that briefly punches a still-on-slab body under the top never
+      // miscounts it: those bodies get shoved back up and recover.
+      const offSlab = Math.abs(x) > b.halfWidth || z < b.farZ || z > b.nearZ
+      if (offSlab && y <= FALL_COUNT_Y && !this.countedFallen.has(enemy)) {
         this.countedFallen.add(enemy)
         this.eliminatedTotal++
       }

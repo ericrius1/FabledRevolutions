@@ -67,20 +67,48 @@ canvas {
   color: var(--mx-green);
 }
 
+.sfx-volume-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  color: var(--mx-green);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.sfx-volume-toggle:hover {
+  opacity: 1;
+  color: var(--mx-bright);
+}
+
+.sfx-volume-toggle.is-muted {
+  color: var(--mx-green-dim);
+}
+
+.sfx-volume-toggle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
 .sfx-volume-slider {
   flex: 1;
   min-width: 0;
-  height: 2px;
+  /* Tall, transparent hit area so a click anywhere on the strip jumps the
+     thumb — the visible line lives on the track pseudo-element below. */
+  height: 18px;
   margin: 0;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(
-    to right,
-    var(--mx-green) 0%,
-    var(--mx-green) var(--sfx-pct, 50%),
-    rgba(52, 224, 122, 0.12) var(--sfx-pct, 50%),
-    rgba(52, 224, 122, 0.12) 100%
-  );
+  background: transparent;
   border: none;
   border-radius: 0;
   cursor: pointer;
@@ -88,7 +116,13 @@ canvas {
 
 .sfx-volume-slider::-webkit-slider-runnable-track {
   height: 2px;
-  background: transparent;
+  background: linear-gradient(
+    to right,
+    var(--mx-green) 0%,
+    var(--mx-green) var(--sfx-pct, 50%),
+    rgba(52, 224, 122, 0.12) var(--sfx-pct, 50%),
+    rgba(52, 224, 122, 0.12) 100%
+  );
   border: none;
 }
 
