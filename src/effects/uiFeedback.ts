@@ -25,6 +25,11 @@ export class UiFeedbackEffect extends BaseEffect {
       ctx.hud.flashVignette();
     });
 
+    ctx.bus.on("player-shielded", () => {
+      if (!this.enabled) return;
+      ctx.hud.pulseShield();
+    });
+
     ctx.bus.on("enemy-hurt", ({ enemy }) => {
       if (!this.enabled) return;
       ctx.hud.shakeEnemyBar(enemy.id);

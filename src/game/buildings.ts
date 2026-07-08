@@ -534,7 +534,8 @@ export class CubeBuildings {
 }
 
 /**
- * The facade cube look: dark concrete shell with a 2×2 window grid per face.
+ * The facade cube look: dark concrete shell with wide ribbon windows (one bay
+ * across, two up, per cube face).
  *
  * Window pattern and rooms are keyed off positionWorld, and each glass texel
  * ray-marches the interior of its world-grid cell for true parallax (interior
@@ -556,25 +557,29 @@ function buildCubeMaterial(s: number, litFraction: number): THREE.MeshStandardNo
   const sideX = ax.x.greaterThan(0.5);
   const isSide = sideX.or(ax.z.greaterThan(0.5));
 
-  // Face-plane coordinates (u across, v up) — 2 window bays per cube per axis.
+  // Face-plane coordinates (u across, v up). One big window per cube face
+  // (pitch s both ways), still a touch wider than tall, so each window is huge —
+  // the room and its monitor read easily. Pitch = cube size, so a window never
+  // straddles two cells (which would tear the interior mapping).
   const faceU = select(sideX, pos.z, pos.x);
-  const bay = s / 2;
-  const wu = faceU.div(bay).fract();
-  const wv = pos.y.div(bay).fract();
+  const bayW = s;
+  const bayH = s;
+  const wu = faceU.div(bayW).fract();
+  const wv = pos.y.div(bayH).fract();
   const inWin = wu
-    .greaterThan(0.16)
-    .and(wu.lessThan(0.84))
-    .and(wv.greaterThan(0.22))
-    .and(wv.lessThan(0.86));
+    .greaterThan(0.08)
+    .and(wu.lessThan(0.92))
+    .and(wv.greaterThan(0.17))
+    .and(wv.lessThan(0.83));
   const glass = isSide.and(inWin);
 
   // The cube cell this texel belongs to, nudged inward off the boundary plane.
   const cell = pos.sub(nrm.mul(0.02)).div(s).floor();
   const cellSeed = cell.x.mul(17.13).add(cell.y.mul(31.7)).add(cell.z.mul(9.31)).add(1000);
 
-  // Per-ROOM identity (half-cube bays): windows on one cube differ.
-  const bayU = faceU.div(bay).floor();
-  const bayV = pos.y.div(bay).floor();
+  // Per-ROOM identity: each window bay gets its own seed so neighbours differ.
+  const bayU = faceU.div(bayW).floor();
+  const bayV = pos.y.div(bayH).floor();
   const roomSeed = cellSeed.add(bayU.mul(3.7)).add(bayV.mul(11.9));
   const lit = hash(roomSeed).lessThan(litFraction);
   // Bulb temperature: Matrix-green cast — desaturated green-white with low red,

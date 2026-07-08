@@ -42,7 +42,9 @@ const PLAYER_BUILDING_SHOCK_SCALE = 5
 const LIGHTNING_BUILDING_POWER = 0.5
 // Wider spacing than before: each agent covers more street, so the ranks read
 // as full lines to the fog line without needing as many bodies to fill them.
-const SLOT_SPACING = 1.7
+// Bumped 1.5× (was 1.7) so each line is sparser — trades line density for an
+// extra vertical stack without inflating the total body count.
+const SLOT_SPACING = 2.55
 const FACADE_INSET = 1.05
 /** Hard ceiling on vertical stacks (ground + ledges); the slider clamps here. */
 const MAX_STACKS = 5
@@ -116,7 +118,7 @@ const TUNING_DEFAULTS = {
   avgFloors: 16,
   litFraction: 0.28,
   /** Vertical stacks per facade: 1 = road only, 2+ add ledge tiers up the wall. */
-  stacks: 3,
+  stacks: 4,
   /** Fly-in speed multiplier: scales stream rate and entrance timing. */
   flyInSpeed: 2,
   /** Subtle neutral emissive amount on building impact ripples. */
@@ -321,7 +323,7 @@ export class RevolutionsScenario implements Scenario {
     })
     this.buildLedges()
     this.buildSlots()
-    this.registerClimbSurfaces()
+    this.registerWallSurfaces()
   }
 
   /** Road footprint aligned to the built facades. The near edge is pushed back
@@ -342,11 +344,11 @@ export class RevolutionsScenario implements Scenario {
     this.env = buildArenaEnvironment(this.ctx, this.corridorBounds())
   }
 
-  /** Let the player scale both facades: cling planes at |x| = wallX, topping
-   * out on each tower's roof. Re-registered whenever the city rebuilds. */
-  private registerClimbSurfaces(): void {
+  /** Let the player wall-kick off both facades: planes at |x| = wallX, capped
+   * at each tower's roof. Re-registered whenever the city rebuilds. */
+  private registerWallSurfaces(): void {
     const wall = this.buildings.wallX
-    this.ctx.player.setClimbSurfaces(
+    this.ctx.player.setWallSurfaces(
       [-1, 1].map((sign) => ({
         sign,
         plane: wall,

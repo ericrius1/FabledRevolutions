@@ -2,6 +2,7 @@ import * as THREE from "three/webgpu";
 import { Physics, Body, Category } from "../core/physics";
 import { glossyLensMaterial, standardNodeMaterial } from "../core/materials";
 import { Health } from "./health";
+import { Shield } from "./shield";
 import type { Input } from "../core/input";
 import type { Combat } from "./combat";
 import type { EventBus } from "../core/events";
@@ -24,6 +25,12 @@ const AIM_DEADZONE = 0.08;
 const AIM_FULL_RADIUS = 0.4;
 const MAX_HEARTS = 5;
 const I_FRAMES = 0.8;
+/** Shield segments absorbed before hearts start dropping (~10 hits to drain). */
+const SHIELD_HITS = 10;
+/** Seconds clear of damage before the shield begins recharging. */
+const SHIELD_RECHARGE_DELAY = 3;
+/** Seconds to refill the shield from empty once recharging starts. */
+const SHIELD_RECHARGE_TIME = 3;
 const UP = new THREE.Vector3(0, 1, 0);
 
 /** What the player collides with. Balcony decks/rails are presentation-only
@@ -58,48 +65,99 @@ const DIVE_SWORD_X = 0.5;
 /** Body y within this of its rest height counts as standing on the ground. */
 const GROUND_EPS = 0.06;
 
-/** Upward climb speed while scaling a facade (m/s). */
-const CLIMB_SPEED = 9;
-/** Sideways strafe speed while clinging to a wall (m/s). */
-const CLIMB_STRAFE = 4;
-/** Max speed the wall-pin corrects lateral drift at — high enough to haul the
- * climber back after a crowd shove, not so high it snaps violently. */
-const WALL_STICK = 10;
-/** Horizontal distance from a facade plane within which a climb can START. */
-const CLING_DIST = PLAYER_RADIUS + 0.4;
-/** Wider band that KEEPS an in-progress climb alive (hysteresis) so a shove
- * from the crowd doesn't instantly drop the cling — the re-pin hauls back. */
-const CLING_KEEP = PLAYER_RADIUS + 1.4;
-/** Gap held between the capsule surface and the wall while climbing — wide
- * enough that the capsule never touches the wall collider (no contact impulses
- * fighting the pin), small enough to still read as clinging. */
-const CLING_GAP = 0.12;
-/** Outward launch speed of a wall leap (m/s). */
-const WALL_LEAP_OUT = 12;
-/** Decay rate (1/s) of the horizontal pop from a wall leap / roof mount. */
+/** Decay rate (1/s) of the horizontal pop from a wall-kick. */
 const LAUNCH_DECAY = 3;
-/** Topping out: a small up + inward hop that lands the climber on the roof. */
-const ROOF_MOUNT_UP = 6;
-const ROOF_MOUNT_IN = 6;
 
-/** Loose wall-kick (Mario-style): a jump pressed while airborne near a facade
- * kicks off it WITHOUT having to cling first. Reachable within this horizontal
- * distance of the wall plane — generous so you never have to hug the concrete. */
-const WALL_KICK_DIST = PLAYER_RADIUS + 2.2;
-/** Upward pop of a wall-kick (m/s) — a touch above a plain jump so the kick
- * out-climbs a normal double jump. */
-const WALL_KICK_UP = 47;
-/** Outward launch speed of a wall-kick (m/s) — stronger than a cling-leap so
- * the kick flings you clear of the building at an angle. */
-const WALL_KICK_OUT = 16;
-/** Minimum gap between successive wall pushes (s) so one button mash can't
- * chain-kick straight up a single face frame-perfectly. */
+/** Arcade wall-kick: a jump pressed while airborne near a facade bounces off it
+ * like a wall-jump — no cling, no climb. Reach, upward pop, and outward boost
+ * are panel-tunable (see {@link wallKickTuning}). These two shape the bounce:
+ * how strongly the approach speed amplifies the outward push, and how much of
+ * the along-wall drift carries through so the exit angle tracks the entry. */
+const WALL_KICK_BOUNCE = 0.7;
+const WALL_KICK_TANGENT = 0.6;
+/** Minimum gap between kicks (s) so one mash can't chain-stack a single face. */
 const WALL_KICK_COOLDOWN = 0.25;
+/** After a kick, air control is suppressed this long (s) so the outward launch
+ * actually carries you off the wall instead of being cancelled by WASD still
+ * held into it. Short enough that steering returns well before the apex. */
+const WALL_KICK_LOCK = 0.22;
 /** Height up the facade the kick's ripple radiates from (relative to the feet). */
 const WALL_RIPPLE_Y = PLAYER_HEIGHT * 0.45;
 /** Impact "speed" fed to the facade ripple — tuned low for a subtle, local
  * wobble rather than a full wave sweep across the building. */
 const WALL_RIPPLE_SPEED = 6;
+
+// ---- Wall-kick tuning (panel-adjustable, persisted) ----
+interface WallKickTuningMeta {
+  readonly label: string;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  readonly defaultValue: number;
+}
+const WALL_KICK_TUNING_META: Record<string, WallKickTuningMeta> = {
+  /** Gap from the wall surface within which a kick fires (m) — close, but you
+   * never have to be right up against it. */
+  reach: { label: "kick reach", min: 0.05, max: 2.5, step: 0.05, defaultValue: 0.25 },
+  /** Upward pop of the kick (m/s). */
+  up: { label: "kick up", min: 20, max: 70, step: 1, defaultValue: 46 },
+  /** Outward boost off the wall (m/s) — the floor under the reflected speed.
+   * High enough that the kick reads as a diagonal launch back toward center. */
+  out: { label: "kick out", min: 5, max: 60, step: 1, defaultValue: 30 },
+};
+export const wallKickTuning: Record<string, number> = {
+  reach: WALL_KICK_TUNING_META.reach.defaultValue,
+  up: WALL_KICK_TUNING_META.up.defaultValue,
+  out: WALL_KICK_TUNING_META.out.defaultValue,
+};
+export const wallKickTuningParams = Object.entries(WALL_KICK_TUNING_META).map(
+  ([key, meta]) => ({
+    key: `wallkick-${key}`,
+    label: meta.label,
+    min: meta.min,
+    max: meta.max,
+    step: meta.step,
+    get: () => wallKickTuning[key],
+    set: (value: number) => setWallKickTuning(key, value),
+  }),
+);
+
+const WALL_KICK_TUNING_PREFIX = "fabled-revolutions.wallkick.";
+const WALL_KICK_TUNING_SCHEMA_KEY = `${WALL_KICK_TUNING_PREFIX}schema`;
+const WALL_KICK_TUNING_SCHEMA = JSON.stringify(WALL_KICK_TUNING_META);
+restoreWallKickTuning();
+
+function setWallKickTuning(key: string, value: number): void {
+  const meta = WALL_KICK_TUNING_META[key];
+  if (!meta) return;
+  wallKickTuning[key] = THREE.MathUtils.clamp(value, meta.min, meta.max);
+  try {
+    localStorage.setItem(WALL_KICK_TUNING_SCHEMA_KEY, WALL_KICK_TUNING_SCHEMA);
+    localStorage.setItem(WALL_KICK_TUNING_PREFIX + key, String(wallKickTuning[key]));
+  } catch {
+    // localStorage unavailable; keep the live value only.
+  }
+}
+
+function restoreWallKickTuning(): void {
+  try {
+    if (localStorage.getItem(WALL_KICK_TUNING_SCHEMA_KEY) !== WALL_KICK_TUNING_SCHEMA) {
+      for (const key of Object.keys(WALL_KICK_TUNING_META)) {
+        localStorage.removeItem(WALL_KICK_TUNING_PREFIX + key);
+      }
+      localStorage.setItem(WALL_KICK_TUNING_SCHEMA_KEY, WALL_KICK_TUNING_SCHEMA);
+      return;
+    }
+    for (const key of Object.keys(WALL_KICK_TUNING_META)) {
+      const raw = localStorage.getItem(WALL_KICK_TUNING_PREFIX + key);
+      if (raw === null) continue;
+      const value = Number(raw);
+      if (Number.isFinite(value)) setWallKickTuning(key, value);
+    }
+  } catch {
+    // localStorage unavailable; keep defaults.
+  }
+}
 
 /** Dive-smash power vs how far the plunge fell: each metre of fall adds this
  * much power, which scales the shockwave radius, launch force, and how much
@@ -119,12 +177,11 @@ const DIVE_POWER_CAP = 8;
 export const HAND_RANGE = 0.7;
 
 /**
- * A climbable facade plane at |x| = `plane`, spanning z ∈ [zMin, zMax]. `topAt`
- * gives the tower top at a z so the climber tops out onto the roof instead of
- * scaling into the sky. Scenarios register these on the player; an empty set
- * disables climbing entirely.
+ * A wall-kick facade plane at |x| = `plane`, spanning z ∈ [zMin, zMax]. `topAt`
+ * gives the tower top at a z so a kick can't fire off a facade the feet have
+ * already cleared. Scenarios register these; an empty set disables wall-kicks.
  */
-export interface ClimbSurface {
+export interface WallSurface {
   sign: number;
   plane: number;
   zMin: number;
@@ -142,6 +199,9 @@ export class Player {
   readonly group = new THREE.Group();
   readonly body: Body;
   readonly health = new Health(MAX_HEARTS, I_FRAMES);
+  /** Halo-style regenerating shield in front of the hearts. Drains ~10 hits,
+   * refills after ~3s clear of the agents, taking ~3s to top off. */
+  readonly shield = new Shield(SHIELD_HITS, SHIELD_RECHARGE_DELAY, SHIELD_RECHARGE_TIME);
 
   /** World-space aim direction on the XZ plane (unit vector) — where the
    * sword points at rest and where attacks land. Body yaw lags behind it. */
@@ -173,8 +233,6 @@ export class Player {
   private readonly camDir = new THREE.Vector3();
   private readonly camRight = new THREE.Vector3();
   private readonly pos = { x: 0, y: 0, z: 0 };
-  /** Scratch world vector for the "pressing into a wall" test. */
-  private readonly wallProbe = new THREE.Vector3();
   /** Scratch physics velocity, read before we overwrite it for this frame. */
   private readonly bodyVel = { x: 0, y: 0, z: 0 };
 
@@ -203,19 +261,15 @@ export class Player {
    * impact power scales with. */
   private smashStartY = 0;
 
-  /** Facades the player can scale (scenario-provided; empty = no climbing). */
-  private readonly climbSurfaces: ClimbSurface[] = [];
-  /** True while clinging to and scaling a facade. */
-  private climbing = false;
-  /** The wall within cling range this frame (null = none reachable). */
-  private climbWall: { sign: number; plane: number } | null = null;
-  /** Side of the last wall climbed — the leap/roof-mount pops off it. */
-  private lastClimbSign = 1;
-  /** Decaying horizontal velocity from a wall leap / roof mount (m/s). */
+  /** Facade planes the player can wall-kick off (scenario-provided; empty = none). */
+  private readonly wallSurfaces: WallSurface[] = [];
+  /** Decaying horizontal velocity from a wall-kick (m/s). */
   private launchVX = 0;
   private launchVZ = 0;
-  /** Counts down after a wall push (kick or cling-leap) so a mash can't stack. */
+  /** Counts down after a wall-kick so a single mash can't chain-stack them. */
   private wallKickCd = 0;
+  /** Post-kick air-control suppression (s) so the launch clears the wall. */
+  private wallKickLock = 0;
   /** Body y last frame — lets us detect a blocked descent (rooftop landing). */
   private prevY = PLAYER_HEIGHT / 2;
 
@@ -346,14 +400,11 @@ export class Player {
     this.camDir.normalize();
     this.camRight.crossVectors(this.camDir, UP).normalize();
 
-    // Move axis polled once up front — the climb test and the movement solve
-    // below both read it.
+    // Move axis polled once up front — the movement solve below reads it.
     input.moveAxis(this.moveAxis);
 
-    // Vertical + wall-climb: we own the y velocity and hand it to the body.
-    // Ground (or a rooftop) stops the descent, and touching down refills the
-    // jump count. Facades registered by the scenario can be scaled — jump into
-    // a wall and hold toward it to cling and climb, jump again to leap off.
+    // Vertical: we own the y velocity and hand it to the body. Ground (or a
+    // rooftop) stops the descent, and a firm landing refills the jump count.
     this.body.getPosition(this.pos);
     this.body.getLinearVelocity(this.bodyVel);
     const bodyY = this.pos.y;
@@ -364,6 +415,7 @@ export class Player {
     // Cache this frame's ground state + feet height for combat / effects.
     this.groundedNow = grounded;
     if (this.wallKickCd > 0) this.wallKickCd = Math.max(0, this.wallKickCd - dt);
+    if (this.wallKickLock > 0) this.wallKickLock = Math.max(0, this.wallKickLock - dt);
 
     if (grounded) {
       // Landing out of a dive smash is the impact frame — fire the shockwave.
@@ -388,49 +440,17 @@ export class Player {
       if (this.vy < 0) this.vy = 0;
     }
 
-    // Which facade (if any) is within cling range, and are we pushing into it?
-    this.evalClimbWall(feetY, this.pos.x, this.pos.z);
-    const intoWall = this.climbWall !== null && this.pressingInto(this.climbWall.sign);
-
-    // Climb state machine.
-    if (this.smashing) {
-      this.climbing = false;
-    } else if (this.climbing) {
-      if (grounded || !intoWall) {
-        this.climbing = false;
-      } else if (!this.climbWall) {
-        // Wall ended above us — top out onto the roof with an up + inward hop.
-        this.climbing = false;
-        this.vy = ROOF_MOUNT_UP;
-        this.launchVX = this.lastClimbSign * ROOF_MOUNT_IN;
-        this.jumps = 0;
-      } else {
-        this.lastClimbSign = this.climbWall.sign;
-      }
-    } else if (this.climbWall && intoWall && !grounded) {
-      this.climbing = true;
-      this.lastClimbSign = this.climbWall.sign;
-    }
-
-    // Jump / double jump / wall leap / wall-kick.
+    // Jump / double jump / wall-kick. An airborne jump press near a facade
+    // bounces off it (arcade wall-kick) and takes priority over the double
+    // jump; otherwise it's a normal ground jump or double jump.
     if (input.consumeJump()) {
-      if (this.climbing) {
-        // Leap off a wall we were clinging to.
-        const w = this.climbWall;
-        this.climbing = false;
-        this.vy = JUMP_SPEED;
-        this.launchVX = -this.lastClimbSign * WALL_LEAP_OUT;
-        this.jumps = 1; // one air action left: a double jump or a dive
-        this.airArc = true;
-        this.wallKickCd = WALL_KICK_COOLDOWN;
-        if (w) this.emitWallRipple(w.sign, w.plane, feetY);
-      } else if (
+      if (
         !grounded &&
         !this.smashing &&
         this.wallKickCd <= 0 &&
         this.tryWallKick(feetY)
       ) {
-        // Loose wall-kick off a nearby facade — handled inside tryWallKick.
+        // Wall-kick handled inside tryWallKick.
       } else if (this.jumps < MAX_JUMPS && !this.smashing) {
         this.vy = JUMP_SPEED;
         this.jumps++;
@@ -447,7 +467,6 @@ export class Player {
       jumpReleased &&
       !this.resolveChargeJumpReleaseDive() &&
       this.vy > 0 &&
-      !this.climbing &&
       !this.smashing
     ) {
       this.vy *= JUMP_CUT;
@@ -458,15 +477,9 @@ export class Player {
     // that path spends the charge on a dive only when the button is released.
     this.resolveAirDiveIntent(input);
 
-    // Climbing owns the vertical: steady ascent, jumps refreshed for the leap.
-    if (this.climbing) {
-      this.vy = CLIMB_SPEED;
-      this.jumps = 0;
-    } else if (!grounded) {
-      this.vy -= GRAVITY * dt;
-    }
+    if (!grounded) this.vy -= GRAVITY * dt;
 
-    // Decay the horizontal pop from a wall leap / roof mount.
+    // Decay the horizontal pop from a wall-kick.
     if (this.launchVX !== 0 || this.launchVZ !== 0) {
       const k = Math.exp(-LAUNCH_DECAY * dt);
       this.launchVX *= k;
@@ -475,32 +488,15 @@ export class Player {
       if (Math.abs(this.launchVZ) < 0.05) this.launchVZ = 0;
     }
 
-    // Movement solve. Climb pins to the wall and strafes along it (and owns the
-    // yaw, then returns early); a dive commits to a forward lunge; otherwise
-    // camera-relative WASD plus any decaying leap pop. The y component always
-    // carries the jump/gravity/climb velocity through unchanged.
+    // Movement solve. A dive commits to a forward lunge; a fresh wall-kick lets
+    // its launch own the horizontal for a moment (so WASD held into the wall
+    // can't cancel the push off it); otherwise camera-relative WASD plus any
+    // decaying wall-kick pop. The y component always carries jump/gravity.
     const moveMag = this.moveAxis.length();
-    if (this.climbing && this.climbWall) {
-      this.moveDir
-        .set(0, 0, 0)
-        .addScaledVector(this.camRight, this.moveAxis.x)
-        .addScaledVector(this.camDir, this.moveAxis.y);
-      // Pin x to just OUTSIDE the wall face rather than driving into the static
-      // collider — a constant inward velocity makes the solver build up and
-      // eventually eject the capsule. Aim for a hair off the surface and close
-      // the gap in one frame; the capsule never penetrates, so it never pops.
-      const pinX = this.climbWall.sign * (this.climbWall.plane - PLAYER_RADIUS - CLING_GAP);
-      const vx = THREE.MathUtils.clamp((pinX - this.pos.x) / Math.max(dt, 1e-3), -WALL_STICK, WALL_STICK);
-      this.body.setLinearVelocity(vx, this.vy, this.moveDir.z * CLIMB_STRAFE);
-      // Face the wall while scaling; the sword-aim dial is suppressed up here.
-      const target = this.climbWall.sign > 0 ? Math.PI / 2 : -Math.PI / 2;
-      this.yaw += wrapAngle(target - this.yaw) * (1 - Math.exp(-TURN_RATE * dt));
-      this.aimYaw += wrapAngle(target - this.aimYaw) * (1 - Math.exp(-SWORD_AIM_RATE * dt));
-      this.facing.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
-    } else if (this.smashing) {
+    if (this.smashing) {
       this.body.setLinearVelocity(this.facing.x * DIVE_SPEED, this.vy, this.facing.z * DIVE_SPEED);
       this.baseYaw = Math.atan2(this.facing.x, this.facing.z);
-    } else if (moveMag > 0) {
+    } else if (moveMag > 0 && this.wallKickLock <= 0) {
       this.moveDir
         .set(0, 0, 0)
         .addScaledVector(this.camRight, this.moveAxis.x)
@@ -572,13 +568,12 @@ export class Player {
   }
 
   /**
-   * Register the facade planes the player can scale (scenario-provided). Pass
-   * an empty array to disable climbing (non-building scenarios).
+   * Register the facade planes the player can wall-kick off (scenario-provided).
+   * Pass an empty array to disable wall-kicks (non-building scenarios).
    */
-  setClimbSurfaces(surfaces: readonly ClimbSurface[]): void {
-    this.climbSurfaces.length = 0;
-    this.climbSurfaces.push(...surfaces);
-    if (surfaces.length === 0) this.climbing = false;
+  setWallSurfaces(surfaces: readonly WallSurface[]): void {
+    this.wallSurfaces.length = 0;
+    this.wallSurfaces.push(...surfaces);
   }
 
   /**
@@ -672,12 +667,11 @@ export class Player {
       physicalVy > -0.2 &&
       actualDrop >= 0 &&
       actualDrop < wantedDrop * 0.4;
-    return (onFloor || blocked) && vy <= 0.01 && !this.climbing;
+    return (onFloor || blocked) && vy <= 0.01;
   }
 
   /** Standing still on a walkable surface — the only state that may spin. */
   private isFirmlyOnGround(bodyY: number, vy: number, dt: number, physicalVy = vy): boolean {
-    if (this.climbing) return false;
     if (Math.abs(vy) > 0.15) return false;
     return this.computeGrounded(bodyY, vy, dt, physicalVy);
   }
@@ -689,7 +683,6 @@ export class Player {
 
   /** Commit to a downward dive smash from the current airborne position. */
   private startSmash(feetY: number, mega: boolean): void {
-    this.climbing = false;
     this.airArc = true;
     this.groundedNow = false;
     this.smashing = true;
@@ -701,20 +694,8 @@ export class Player {
   }
 
   /**
-   * Pick the closest facade within cling range at the given feet height that
-   * hasn't been climbed clear of (feet below its roof). Sets `climbWall`.
-   */
-  private evalClimbWall(feetY: number, x: number, z: number): void {
-    // Once clinging, a wider band keeps the wall in range (the re-pin hauls a
-    // shoved climber back) so a bump from the crowd doesn't drop the climb.
-    const range = this.climbing ? CLING_KEEP : CLING_DIST;
-    this.climbWall = this.nearestWall(feetY, x, z, range);
-  }
-
-  /**
-   * Closest scalable facade within `range` of (x,z) at the given feet height
-   * that hasn't been climbed clear of (feet below its roof), or null if none
-   * reach. Backs both the cling test and the looser wall-kick.
+   * Closest wall-kick facade within `range` of (x,z) at the given feet height
+   * that the feet haven't already cleared the roof of, or null if none reach.
    */
   private nearestWall(
     feetY: number,
@@ -724,12 +705,12 @@ export class Player {
   ): { sign: number; plane: number } | null {
     let best = Infinity;
     let found: { sign: number; plane: number } | null = null;
-    for (const s of this.climbSurfaces) {
+    for (const s of this.wallSurfaces) {
       if (z < s.zMin || z > s.zMax) continue;
       const d = Math.abs(s.sign * s.plane - x);
       if (d > range || d >= best) continue;
       const top = s.topAt ? s.topAt(z) : Infinity;
-      if (feetY >= top - 0.3) continue; // climbed clear of the roof
+      if (feetY >= top - 0.3) continue; // above the roof — no wall to kick
       best = d;
       found = { sign: s.sign, plane: s.plane };
     }
@@ -737,39 +718,43 @@ export class Player {
   }
 
   /**
-   * Kick off a facade within loose reach — the easy, no-cling wall jump. Pops
-   * up a hair higher than a plain jump and flings out away from the wall, then
-   * leaves one air action so a kick can still flow into a double jump or dive.
+   * Arcade wall-kick: bounce off a nearby facade like a ball. The horizontal
+   * approach is reflected across the wall — the component driving into the wall
+   * flips and boosts out (never below the tunable `out` floor), while some of
+   * the along-wall drift carries through so the exit angle tracks the entry.
+   * Pops up by the tunable `up`, and RESETS the jump count so a full double
+   * jump is available after the kick. The sword charge is untouched, so a
+   * charged kick can flow into a double jump and a charged smash back down.
    * Returns false (letting a normal jump run) when no wall is close enough.
    */
   private tryWallKick(feetY: number): boolean {
-    const wall = this.nearestWall(feetY, this.pos.x, this.pos.z, WALL_KICK_DIST);
+    const range = PLAYER_RADIUS + wallKickTuning.reach;
+    const wall = this.nearestWall(feetY, this.pos.x, this.pos.z, range);
     if (!wall) return false;
-    this.vy = WALL_KICK_UP;
-    this.launchVX = -wall.sign * WALL_KICK_OUT;
-    this.jumps = 1;
+
+    // Outward normal points off the wall face into the play area.
+    const nX = -wall.sign;
+    // bodyVel is this frame's pre-solve velocity — the approach into the wall.
+    const approach = this.bodyVel.x * nX; // < 0 while moving toward the wall
+    const outSpeed = Math.max(wallKickTuning.out, Math.abs(approach) * WALL_KICK_BOUNCE);
+    this.launchVX = nX * outSpeed;
+    this.launchVZ = this.bodyVel.z * WALL_KICK_TANGENT;
+
+    this.vy = wallKickTuning.up;
+    this.jumps = 0; // full double jump restored after the kick
     this.airArc = true;
-    this.lastClimbSign = wall.sign;
     this.wallKickCd = WALL_KICK_COOLDOWN;
+    this.wallKickLock = WALL_KICK_LOCK;
     this.emitWallRipple(wall.sign, wall.plane, feetY);
     return true;
   }
 
-  /** Fire a subtle facade ripple from the point a wall push kicked off. */
+  /** Fire a subtle facade ripple from the point a wall-kick pushed off. */
   private emitWallRipple(sign: number, plane: number, feetY: number): void {
     this.bus.emit("wall-jump", {
       origin: new THREE.Vector3(sign * plane, feetY + WALL_RIPPLE_Y, this.pos.z),
       speed: WALL_RIPPLE_SPEED,
     });
-  }
-
-  /** True when the current move input pushes toward the wall on side `sign`. */
-  private pressingInto(sign: number): boolean {
-    this.wallProbe
-      .set(0, 0, 0)
-      .addScaledVector(this.camRight, this.moveAxis.x)
-      .addScaledVector(this.camDir, this.moveAxis.y);
-    return this.wallProbe.x * sign > 0.2;
   }
 
   /**
@@ -807,13 +792,14 @@ export class Player {
     this.jumps = 0;
     this.airArc = false;
     this.smashing = false;
-    this.climbing = false;
     this.launchVX = 0;
     this.launchVZ = 0;
     this.wallKickCd = 0;
+    this.wallKickLock = 0;
     this.smashStartY = 0;
     this.prevY = PLAYER_HEIGHT / 2;
     this.health.reset();
+    this.shield.reset();
   }
 }
 

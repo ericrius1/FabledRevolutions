@@ -5,7 +5,7 @@ import { GameClock } from "./core/time"
 import { FollowCamera } from "./core/camera"
 import { ManualCameraControls } from "./core/cameraControls"
 import { Input } from "./core/input"
-import { Player } from "./game/player"
+import { Player, wallKickTuningParams } from "./game/player"
 import { Enemy } from "./game/enemy"
 import { EnemySpatialIndex } from "./game/enemySpatialIndex"
 import { Combat, combatTuningParams } from "./game/combat"
@@ -259,9 +259,9 @@ async function boot(): Promise<void> {
   const loadScenario = (id: string): void => {
     if (scenario) scenario.dispose()
     scenario = getScenarioEntry(id).create()
-    // Clear any climbable facades from the previous scenario; the new one
+    // Clear any wall-kick facades from the previous scenario; the new one
     // re-registers its own during setup (only Revolutions has buildings).
-    player.setClimbSurfaces([])
+    player.setWallSurfaces([])
     const scenarioCtx: ScenarioContext = { physics, scene, bus, player }
     scenario.setup(scenarioCtx)
     player.respawn(scenario.playerSpawn)
@@ -283,7 +283,10 @@ async function boot(): Promise<void> {
   const panel = new Panel(
     effectManager,
     loadScenario,
-    [{ label: "Attack", params: combatTuningParams }],
+    [
+      { label: "Attack", params: combatTuningParams },
+      { label: "Attack", params: wallKickTuningParams }
+    ],
     {
       enabled: isWireframeEnabled(),
       onChange: (on) => setWireframeEnabled(on, scene)
@@ -435,13 +438,16 @@ async function boot(): Promise<void> {
       // steering gets a chance to cancel the victim's motion.
       Enemy.resolveBilliardTransfers(enemies, enemyIndex)
 
-      // i-frames tick on wall-clock time.
+      // i-frames + shield regen tick on wall-clock time.
       player.health.tick(unscaledDt)
+      player.shield.tick(unscaledDt)
 
-      // Enemy AI + touch damage on scaled dt (freezes during hit-stop).
+      // Enemy AI + touch damage on scaled dt (freezes during hit-stop). The
+      // shield soaks contact first; only once it is down do hearts drop (which
+      // gate themselves on their own i-frames).
       for (const enemy of enemies) {
         const inRange = enemy.update(scaledDt, player, enemies, enemyIndex)
-        if (inRange && !enemy.dead && !player.health.invulnerable) {
+        if (inRange && !enemy.dead) {
           applyTouchDamage(enemy)
         }
       }
@@ -600,19 +606,36 @@ async function boot(): Promise<void> {
   }
 
   function applyTouchDamage(enemy: import("./game/enemy").Enemy): void {
-    const landed = player.health.damage(PLAYER_TOUCH_DAMAGE)
-    if (!landed) return
+    const shieldState = player.shield.hit()
+    // On its per-hit cooldown — this contact does nothing.
+    if (shieldState === "blocked") return
+
     const dir = new THREE.Vector3()
       .copy(player.position)
       .sub(enemy.position)
       .setY(0)
       .normalize()
+    const point = player.position.clone().setY(1)
+
+    // Shield ate it: shove the player back, flash the meter, keep hearts intact.
+    if (shieldState === "absorbed") {
+      player.body.applyLinearImpulseToCenter(
+        dir.x * PLAYER_KNOCKBACK,
+        0,
+        dir.z * PLAYER_KNOCKBACK
+      )
+      bus.emit("player-shielded", { point, dir })
+      return
+    }
+
+    // Shield is down — hearts take the hit (gated by their own i-frames).
+    const landed = player.health.damage(PLAYER_TOUCH_DAMAGE)
+    if (!landed) return
     player.body.applyLinearImpulseToCenter(
       dir.x * PLAYER_KNOCKBACK,
       0,
       dir.z * PLAYER_KNOCKBACK
     )
-    const point = player.position.clone().setY(1)
     bus.emit("player-hurt", { point, dir })
     if (player.health.isDead) {
       bus.emit("player-death", {})

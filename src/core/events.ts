@@ -21,6 +21,8 @@ export interface GameEventMap {
   "enemy-hurt": { enemy: Enemy; point: THREE.Vector3; dir: THREE.Vector3; power: number };
   "enemy-death": { enemy: Enemy; point: THREE.Vector3; dir: THREE.Vector3; power: number };
   "player-hurt": { point: THREE.Vector3; dir: THREE.Vector3 };
+  /** An enemy touch was soaked by the shield (hearts untouched). */
+  "player-shielded": { point: THREE.Vector3; dir: THREE.Vector3 };
   "player-death": Record<string, never>;
 
   // ---- Charge / spin attack ----
@@ -42,8 +44,8 @@ export interface GameEventMap {
   /** The dive slammed into the ground. `power` scales the shockwave; `origin`
    * is the impact point (player position at y≈0). */
   "dive-impact": { origin: THREE.Vector3; power: number; mega: boolean };
-  /** Player kicked off a building facade (wall-kick or cling-leap). A subtle
-   * ripple radiates from `origin` on the wall; `speed` scales its reach. */
+  /** Player wall-kicked off a building facade. A subtle ripple radiates from
+   * `origin` on the wall; `speed` scales its reach. */
   "wall-jump": { origin: THREE.Vector3; speed: number };
   /** The max-charge dive slammed home — the ground-smash spectacle: impact
    * bullet time plus a mega lightning storm in its own warmer molten palette.

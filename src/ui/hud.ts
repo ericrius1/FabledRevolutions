@@ -16,6 +16,18 @@ export class Hud {
   readonly vignetteEl: HTMLDivElement;
 
   private readonly hearts: HTMLDivElement[] = [];
+
+  // Halo-style shield meter, sits just under the hearts.
+  private readonly shieldEl: HTMLDivElement;
+  private readonly shieldFillEl: HTMLDivElement;
+  private shownShield = -1;
+  private shownRecharging = false;
+
+  // One-time intro box (top center) explaining the goal.
+  private readonly introEl: HTMLDivElement;
+  private introDismissed = false;
+  /** Wall-clock ms when the intro should auto-dismiss (0 = not scheduled yet). */
+  private introHideAt = 0;
   /** Reused DOM bars keyed by enemy id; created on first sight. */
   private readonly bars = new Map<number, { el: HTMLDivElement; fill: HTMLDivElement }>();
   private readonly projected = new THREE.Vector3();
@@ -48,6 +60,32 @@ export class Hud {
       this.heartsEl.appendChild(heart);
     }
     parent.appendChild(this.heartsEl);
+
+    // Shield meter under the hearts. Segment ticks hint at the ~10-hit capacity;
+    // the fill drains right-to-left and glows while recharging.
+    this.shieldEl = document.createElement("div");
+    this.shieldEl.className = "shield-meter";
+    const shieldTrack = document.createElement("div");
+    shieldTrack.className = "shield-track";
+    this.shieldFillEl = document.createElement("div");
+    this.shieldFillEl.className = "shield-fill";
+    shieldTrack.appendChild(this.shieldFillEl);
+    this.shieldEl.appendChild(shieldTrack);
+    parent.appendChild(this.shieldEl);
+
+    // Intro box: what the player is trying to do. Auto-fades, or click to close.
+    this.introEl = document.createElement("div");
+    this.introEl.className = "intro-box";
+    this.introEl.innerHTML =
+      '<div class="intro-title">OBJECTIVE</div>' +
+      "<p>Knock every <b>agent</b> off the end of the world.</p>" +
+      "<p>Your <span class=\"intro-shield\">shield</span> soaks their hits and " +
+      "recharges when you break away. Once it's down, the agents start chipping " +
+      "your <span class=\"intro-heart\">hearts</span>.</p>" +
+      "<p>Lose all five and you're deleted — respawn back at the beginning.</p>" +
+      '<div class="intro-dismiss">click to dismiss</div>';
+    this.introEl.addEventListener("click", () => this.dismissIntro());
+    parent.appendChild(this.introEl);
 
     this.barsEl = document.createElement("div");
     this.barsEl.className = "enemy-bars";
@@ -175,6 +213,46 @@ export class Hud {
     }
   }
 
+  /** Drain/refill the shield bar; light it up while it's recharging. */
+  private updateShield(player: Player): void {
+    const frac = player.shield.fraction;
+    // Quantize so we only touch the DOM when the bar visibly moves.
+    const pct = Math.round(frac * 100);
+    if (pct !== this.shownShield) {
+      this.shownShield = pct;
+      this.shieldFillEl.style.width = `${pct}%`;
+      this.shieldEl.classList.toggle("low", frac > 0 && frac < 0.34);
+      this.shieldEl.classList.toggle("down", frac <= 0);
+    }
+    const recharging = player.shield.recharging;
+    if (recharging !== this.shownRecharging) {
+      this.shownRecharging = recharging;
+      this.shieldEl.classList.toggle("recharging", recharging);
+    }
+  }
+
+  /** Fade the intro box after a beat; called every frame once shown. */
+  private updateIntro(): void {
+    if (this.introDismissed) return;
+    const now = performance.now();
+    if (this.introHideAt === 0) {
+      this.introHideAt = now + 11000; // ~11s to read, then auto-fade
+      return;
+    }
+    if (now >= this.introHideAt) this.dismissIntro();
+  }
+
+  private dismissIntro(): void {
+    if (this.introDismissed) return;
+    this.introDismissed = true;
+    this.introEl.classList.add("gone");
+  }
+
+  /** Pulse the shield meter when it soaks a hit. */
+  pulseShield(): void {
+    retrigger(this.shieldEl, "flash");
+  }
+
   /**
    * Project each enemy's head to screen space and position its bar. Bars appear
    * once an enemy is hurt (HP below max) so untouched enemies stay clean, like
@@ -240,6 +318,8 @@ export class Hud {
     // one frame behind the canvas (visible ghosting when moving or jumping).
     camera.updateMatrixWorld();
     this.updateHearts(player);
+    this.updateShield(player);
+    this.updateIntro();
     this.updateEnemyBars(enemies, camera, width, height);
     this.updateEnemyCount(enemies);
     this.updateKillMeter(mega);

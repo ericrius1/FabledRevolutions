@@ -264,6 +264,8 @@ body.immersive .sfx-volume,
 body.immersive .social-links,
 body.immersive .info-button,
 body.immersive .hud-hearts,
+body.immersive .shield-meter,
+body.immersive .intro-box,
 body.immersive .enemy-bars,
 body.immersive .kill-meter,
 body.immersive .enemy-count,
@@ -535,6 +537,177 @@ body.paused .pause-overlay {
 
 .heart.empty {
   --heart-color: #55555c;
+}
+
+/* ---- Shield meter (Halo-style, under the hearts) ---- */
+.shield-meter {
+  position: fixed;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 148px;
+  pointer-events: none;
+}
+
+.shield-track {
+  position: relative;
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(6, 20, 34, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 200, 255, 0.35),
+    0 0 6px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  /* Segment ticks hint at the ~10 hits it takes to drain. */
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(10% - 1px),
+    rgba(4, 12, 22, 0.9) calc(10% - 1px),
+    rgba(4, 12, 22, 0.9) 10%
+  );
+}
+
+.shield-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #4fd6ff, #a9ecff);
+  box-shadow: 0 0 8px rgba(120, 210, 255, 0.85);
+  transition: width 0.12s linear;
+}
+
+/* Recharging: pulse the glow so the regen reads at a glance. */
+.shield-meter.recharging .shield-fill {
+  animation: shield-recharge 1s ease-in-out infinite;
+}
+
+@keyframes shield-recharge {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(120, 210, 255, 0.5);
+    filter: brightness(0.9);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(150, 230, 255, 1);
+    filter: brightness(1.3);
+  }
+}
+
+/* Nearly depleted: shift the bar hot so the last sliver reads as danger. */
+.shield-meter.low .shield-fill {
+  background: linear-gradient(90deg, #ff7a4f, #ffd0a9);
+  box-shadow: 0 0 9px rgba(255, 150, 90, 0.9);
+}
+
+/* Down entirely: dim the empty track. */
+.shield-meter.down .shield-track {
+  box-shadow:
+    inset 0 0 0 1px rgba(120, 200, 255, 0.14),
+    0 0 6px rgba(0, 0, 0, 0.5);
+}
+
+/* Soaked a hit — quick flash. */
+.shield-meter.flash .shield-fill {
+  animation: shield-flash 0.24s ease-out;
+}
+
+@keyframes shield-flash {
+  0% {
+    filter: brightness(2.2);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+/* ---- Intro objective box (top center, one-time) ---- */
+.intro-box {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 18px 12px;
+  background: var(--mx-panel);
+  border: 1px solid var(--mx-border);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 8px 30px rgba(0, 0, 0, 0.5),
+    inset 0 0 24px rgba(52, 224, 122, 0.06);
+  color: var(--mx-bright);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  cursor: pointer;
+  z-index: 40;
+  opacity: 0;
+  animation: intro-in 0.5s ease-out 0.3s forwards;
+}
+
+.intro-box p {
+  margin: 6px 0 0;
+}
+
+.intro-box b {
+  color: var(--mx-green);
+  font-weight: 600;
+}
+
+.intro-title {
+  font-family: var(--mx-mono);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  color: var(--mx-green);
+  text-shadow: 0 0 10px var(--mx-green-faint);
+}
+
+.intro-shield {
+  color: #8fdcff;
+  font-weight: 600;
+}
+
+.intro-heart {
+  color: #ff8095;
+  font-weight: 600;
+}
+
+.intro-dismiss {
+  margin-top: 10px;
+  font-family: var(--mx-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mx-green-dim);
+  opacity: 0.75;
+}
+
+.intro-box.gone {
+  animation: intro-out 0.45s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes intro-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes intro-out {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
 }
 
 /* ---- Enemy health bars (billboarded via CSS positioning) ---- */
