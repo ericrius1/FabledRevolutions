@@ -2,6 +2,8 @@ import * as THREE from "three/webgpu";
 import {
   cameraPosition,
   cameraViewMatrix,
+  cos,
+  dot,
   float,
   hash,
   mix,
@@ -10,6 +12,8 @@ import {
   positionLocal,
   positionWorld,
   select,
+  sin,
+  time,
   vec3,
   vec4,
 } from "three/tsl";
@@ -353,47 +357,67 @@ export class CubeBuildings {
     }
     const plan: Cell[] = [];
 
-    for (const side of [-1, 1]) {
+    // One row of towers along Z on one side. `depthBase` steps the row outward
+    // from the wall (front row = 0; a back row sits behind a one-cell alley),
+    // `heightScale` biases its skyline, and `collide` gates the static collider
+    // + wall-climb roof (only the front row is reachable, so only it collides).
+    const buildRow = (
+      side: number,
+      depthBase: number,
+      heightScale: number,
+      collide: boolean,
+    ): void => {
       let iz = 0;
       while (iz < cellsZ) {
         const width = 2 + Math.floor(Math.random() * 2);
-        const towerH = Math.max(
-          2,
-          cfg.avgFloors + Math.floor(Math.random() * 5) - 2,
-        );
+        // Wide spread around the average, plus rare tall spikes, for a jagged,
+        // varied skyline rather than a uniform wall.
+        let towerH = Math.round(cfg.avgFloors * heightScale * (0.6 + Math.random() * 0.85));
+        if (Math.random() < 0.12) towerH = Math.round(towerH * (1.3 + Math.random() * 0.6));
+        towerH = Math.max(2, towerH);
         const zEnd = Math.min(cellsZ, iz + width);
         let towerMaxH = 0;
         for (let z = iz; z < zEnd; z++) {
-          const colH = Math.max(2, towerH - (Math.random() < 0.35 ? 1 : 0));
+          const colH = Math.max(2, towerH - Math.floor(Math.random() * 3));
           towerMaxH = Math.max(towerMaxH, colH);
           for (let d = 0; d < 2; d++) {
-            // Signed depth index: side +1 occupies ix 0,1; side -1 occupies -1,-2.
-            const ix = side > 0 ? d : -1 - d;
+            // Signed depth index: side +1 fills ix depthBase..+1; side -1 mirrors.
+            const ix = side > 0 ? depthBase + d : -1 - depthBase - d;
             for (let iy = 0; iy < colH; iy++) {
               plan.push({ ix, iy, iz: z });
             }
           }
         }
-        // One static collider spans the whole tower.
-        const zNear = -iz * s;
-        const zFar = -zEnd * s;
-        const zc = (zNear + zFar) / 2;
-        const hz = (zNear - zFar) / 2;
-        this.bodies.push(
-          this.physics.createBox({
-            x: side * (this.wallX + s), // center of the 2-cube depth
-            y: (towerMaxH * s) / 2,
-            z: zc,
-            hx: s,
-            hy: (towerMaxH * s) / 2,
-            hz,
-            kind: "static",
-            category: Category.Ground,
-          }),
-        );
-        this.towers.push({ sign: side, zMin: zc - hz, zMax: zc + hz, top: towerMaxH * s });
+        if (collide) {
+          // One static collider spans the whole tower.
+          const zNear = -iz * s;
+          const zFar = -zEnd * s;
+          const zc = (zNear + zFar) / 2;
+          const hz = (zNear - zFar) / 2;
+          this.bodies.push(
+            this.physics.createBox({
+              x: side * (this.wallX + s), // center of the 2-cube depth
+              y: (towerMaxH * s) / 2,
+              z: zc,
+              hx: s,
+              hy: (towerMaxH * s) / 2,
+              hz,
+              kind: "static",
+              category: Category.Ground,
+            }),
+          );
+          this.towers.push({ sign: side, zMin: zc - hz, zMax: zc + hz, top: towerMaxH * s });
+        }
         iz = zEnd + (Math.random() < 0.35 ? 1 : 0);
       }
+    };
+
+    for (const side of [-1, 1]) {
+      // Front row lines the corridor (collides, carries the climb roofs); a
+      // taller back row sits behind a one-cell alley for depth. The back row is
+      // purely decorative — same static instanced mesh, no physics.
+      buildRow(side, 0, 1, true);
+      buildRow(side, 3, 1.45, false);
     }
 
     const geometry = new THREE.BoxGeometry(s, s, s);
@@ -553,8 +577,9 @@ function buildCubeMaterial(s: number, litFraction: number): THREE.MeshStandardNo
   const bayV = pos.y.div(bay).floor();
   const roomSeed = cellSeed.add(bayU.mul(3.7)).add(bayV.mul(11.9));
   const lit = hash(roomSeed).lessThan(litFraction);
-  // Bulb temperature spread: most warm, some cold green-white (Matrix cast).
-  const bulb = mix(vec3(1.0, 0.75, 0.42), vec3(0.65, 1.0, 0.78), hash(roomSeed.add(7.7)));
+  // Bulb temperature: Matrix-green cast — desaturated green-white with low red,
+  // so rooms read as monitor-lit rather than incandescent yellow.
+  const bulb = mix(vec3(0.42, 0.82, 0.5), vec3(0.55, 1.0, 0.72), hash(roomSeed.add(7.7)));
 
   // Interior mapping: slab-intersect the view ray with the far planes of
   // this texel's world-grid cell; shade the hit by which plane it landed on.
@@ -580,11 +605,140 @@ function buildCubeMaterial(s: number, litFraction: number): THREE.MeshStandardNo
     .add(0.5)
     .clamp(0.35, 1);
   const litLevel = tone.mul(depthFade).mul(clutter);
-  const interiorEmit = select(
+  const roomEmit = select(
     lit,
     bulb.mul(litLevel).mul(1.4),
     // Dark rooms still get a whisper of interior so the parallax reads.
     bulb.mul(litLevel).mul(0.05),
+  ).mul(vec3(0.82, 1.0, 0.86)); // global Matrix-green wash
+
+  // ---- Stylized desk + monitor, ray-marched in-shader (no geometry) ----------
+  // Roughly every other room gets a little monitor sitting on a desk, at a
+  // per-room size/yaw/offset. It's a second pair of ray-vs-box intersections
+  // against the same interior ray; the nearest of {far wall, desk, monitor}
+  // wins. Fully analytic, no loops, no extra draws — the whole city is still one
+  // static instanced mesh, so this stays cheap.
+  const hasMon = hash(roomSeed.add(21.7)).greaterThan(0.55);
+
+  // Room-local frame: depth points out toward the window (nrm), side runs along
+  // the wall, up is world-up. nrm is axis-aligned so side/depth are too.
+  const roomCenter = cell.add(0.5).mul(s);
+  const sideAxis = vec3(nrm.z, float(0), nrm.x);
+  const relO = pos.sub(roomCenter);
+  // dot() is mistyped as returning the vector type; it's a float scalar at
+  // runtime, so cast to keep the downstream scalar math from inferring vec3.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const Oa = dot(relO, sideAxis) as any;
+  const Ob = relO.y as any;
+  const Oc = dot(relO, nrm) as any;
+  const Da = dot(dir, sideAxis) as any;
+  const Db = dir.y as any;
+  const Dc = dot(dir, nrm) as any;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const floorY = float(-s * 0.5);
+
+  // Per-room monitor size / aspect / yaw / placement.
+  const rSize = hash(roomSeed.add(4.2));
+  const rAsp = hash(roomSeed.add(9.3));
+  const rYaw = hash(roomSeed.add(8.9));
+  const rPa = hash(roomSeed.add(2.3));
+  const rPc = hash(roomSeed.add(5.6));
+  const hw = float(s * 0.11).add(rSize.mul(s * 0.06)); // screen half-width
+  const hh = hw.mul(rAsp.mul(0.14).add(0.6)); // aspect ~0.60..0.74
+  const hd = float(s * 0.02); // thin panel
+  const deskTop = floorY.add(float(s * 0.34));
+  const ma = rPa.sub(0.5).mul(s * 0.4); // side offset
+  const mc = rPc.mul(s * 0.25).sub(s * 0.1); // depth offset (~room centre)
+  const mb = deskTop.add(hh).add(float(s * 0.005)); // sits on the desk
+
+  // Slab test for a linear axis X(t)=X0+t*X1 against |X|<h → entry/exit t.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const slab = (X0: any, X1: any, h: any) => {
+    const inv = float(1).div(X1);
+    const t1 = h.negate().sub(X0).mul(inv);
+    const t2 = h.sub(X0).mul(inv);
+    return { lo: t1.min(t2), hi: t1.max(t2) };
+  };
+
+  // Monitor: thin box yaw-rotated about up. Rotate the ray into the box frame
+  // (only side/depth turn) — still linear in t, so the same slab test applies.
+  const yaw = rYaw.sub(0.5).mul(1.1);
+  const cy = cos(yaw);
+  const sy = sin(yaw);
+  const pa0 = Oa.sub(ma);
+  const pc0 = Oc.sub(mc);
+  const A0 = pa0.mul(cy).add(pc0.mul(sy));
+  const A1 = Da.mul(cy).add(Dc.mul(sy));
+  const C0 = pa0.mul(sy).negate().add(pc0.mul(cy));
+  const C1 = Da.mul(sy).negate().add(Dc.mul(cy));
+  const mAx = slab(A0, A1, hw);
+  const mUp = slab(Ob.sub(mb), Db, hh);
+  const mDe = slab(C0, C1, hd);
+  const tMon = mAx.lo.max(mUp.lo).max(mDe.lo);
+  const tMonExit = mAx.hi.min(mUp.hi).min(mDe.hi);
+  const monHit = hasMon
+    .and(tMonExit.greaterThan(tMon))
+    .and(tMon.greaterThan(0))
+    .and(tMon.lessThan(t));
+
+  // Screen surface coords at the entry point → matrix rain glyph columns.
+  const laHit = A0.add(A1.mul(tMon));
+  const lbHit = Ob.sub(mb).add(Db.mul(tMon));
+  const su = laHit.div(hw).mul(0.5).add(0.5);
+  const sv = lbHit.div(hh).mul(0.5).add(0.5);
+  const onScreen = su
+    .greaterThan(0.08)
+    .and(su.lessThan(0.92))
+    .and(sv.greaterThan(0.1))
+    .and(sv.lessThan(0.9));
+  const csu = su.sub(0.08).div(0.84).clamp(0, 1);
+  const csv = sv.sub(0.1).div(0.8).clamp(0, 1);
+  const col = csu.mul(7).floor();
+  const colRand = hash(col.mul(1.7).add(roomSeed.mul(0.13)).add(3.0));
+  const fallSpeed = colRand.mul(0.8).add(0.35);
+  // Bright head streams downward; trail fades upward behind it.
+  const headV = time.mul(fallSpeed).add(colRand.mul(10)).fract().oneMinus();
+  const above = csv.sub(headV);
+  const trailLen = colRand.mul(0.4).add(0.35);
+  const inTrail = above.greaterThan(0).and(above.lessThan(trailLen));
+  const trailBright = above.div(trailLen).oneMinus().clamp(0, 1);
+  // Discrete per-cell glyph flicker so the trail reads as characters.
+  const rowCell = csv.mul(13).floor();
+  const glyph = hash(rowCell.mul(1.9).add(col.mul(5.3)).add(time.mul(6).floor().mul(0.37)))
+    .mul(0.6)
+    .add(0.4);
+  const headGlow = above.abs().mul(16).oneMinus().clamp(0, 1);
+  const rainAmt = select(inTrail, trailBright.mul(glyph), float(0));
+  const screenEmit = vec3(0.15, 1.0, 0.32)
+    .mul(rainAmt)
+    .add(vec3(0.7, 1.0, 0.8).mul(headGlow.mul(0.9)))
+    .add(vec3(0.02, 0.14, 0.05)); // faint backlight
+  const monitorEmit = select(onScreen, screenEmit.mul(1.7), vec3(0.008, 0.02, 0.014));
+
+  // Desk: axis-aligned slab on the floor under the monitor.
+  const dw = hw.add(float(s * 0.04));
+  const dd = hd.add(float(s * 0.06));
+  const dAx = slab(Oa.sub(ma), Da, dw);
+  const dUp = slab(Ob.sub(floorY.add(deskTop).mul(0.5)), Db, deskTop.sub(floorY).mul(0.5));
+  const dDe = slab(Oc.sub(mc), Dc, dd);
+  const tDesk = dAx.lo.max(dUp.lo).max(dDe.lo);
+  const tDeskExit = dAx.hi.min(dUp.hi).min(dDe.hi);
+  const deskHit = hasMon
+    .and(tDeskExit.greaterThan(tDesk))
+    .and(tDesk.greaterThan(0))
+    .and(tDesk.lessThan(t));
+  const deskEmit = vec3(0.02, 0.05, 0.035);
+
+  // Nearest surface wins (BIG sentinel for the misses).
+  const BIG = float(1e9);
+  const tMonSel = select(monHit, tMon, BIG);
+  const tDeskSel = select(deskHit, tDesk, BIG);
+  const monNear = tMonSel.lessThan(tDeskSel).and(tMonSel.lessThan(t));
+  const deskNear = tDeskSel.lessThan(tMonSel).and(tDeskSel.lessThan(t));
+  const interiorEmit = select(
+    monNear,
+    monitorEmit,
+    select(deskNear, deskEmit, roomEmit),
   );
 
   // Concrete shell: cool dark blue-green block with per-cube tint variation

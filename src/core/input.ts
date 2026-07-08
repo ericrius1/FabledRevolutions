@@ -340,7 +340,7 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Shift / LB / RB / LT) — triples ground move speed. */
+  /** True while sprint is held (Shift / LB / RB / LT) — boosts ground move speed. */
   get sprintHeld(): boolean {
     return (
       this.keys.has("ShiftLeft") ||

@@ -7,7 +7,7 @@ import {
   disposeArenaEnvironment,
   type ArenaCorridorBounds
 } from "./arena"
-import { Category, type Body } from "../core/physics"
+import { type Body } from "../core/physics"
 import { standardNodeMaterial } from "../core/materials"
 import {
   setBuildingImpactGlowStrength,
@@ -113,7 +113,7 @@ const TUNING_DEFAULTS = {
   /** Metres of road kept BEHIND the player spawn (+Z). Also moves the near
    * end-cap wall off the spawn so the player doesn't get shoved into a float. */
   behindMargin: 50,
-  avgFloors: 8,
+  avgFloors: 16,
   litFraction: 0.28,
   /** Vertical stacks per facade: 1 = road only, 2+ add ledge tiers up the wall. */
   stacks: 3,
@@ -202,9 +202,6 @@ export class RevolutionsScenario implements Scenario {
   >()
   private readonly arrivals = new Map<Enemy, Arrival>()
   private readonly ledges: THREE.Mesh[] = []
-  /** Static colliders backing the balcony decks + rail bars so the player can
-   * land/stand on them instead of falling through. Rebuilt with the meshes. */
-  private readonly ledgeBodies: Body[] = []
   private readonly activePressers = new Set<Enemy>()
   private readonly velScratch = { x: 0, y: 0, z: 0 }
   private readonly arrivalImpactPoint = new THREE.Vector3()
@@ -496,34 +493,9 @@ export class RevolutionsScenario implements Scenario {
         mat.makeTranslation(railX, y + RAIL_HEIGHT, zCenter)
         railMesh.setMatrixAt(ri++, mat)
 
-        // Solid backing for the deck (a floor to stand on) and the rail bar (a
-        // waist-high wall along the street edge). Static, and collide with the
-        // player only — the climb drops its Ledge bit to scale past them, and
-        // the crowd up here is presentation-only, never physical.
-        this.ledgeBodies.push(
-          this.ctx.physics.createBox({
-            x: deckX,
-            y: y - LEDGE_THICKNESS * 0.5,
-            z: zCenter,
-            hx: deckDepth / 2,
-            hy: LEDGE_THICKNESS / 2,
-            hz: zLength / 2,
-            kind: "static",
-            category: Category.Ledge,
-            mask: Category.Player
-          }),
-          this.ctx.physics.createBox({
-            x: railX,
-            y: y + RAIL_HEIGHT,
-            z: zCenter,
-            hx: RAIL_BAR_THICKNESS / 2,
-            hy: RAIL_BAR_THICKNESS / 2,
-            hz: zLength / 2,
-            kind: "static",
-            category: Category.Ledge,
-            mask: Category.Player
-          })
-        )
+        // Decks + rails are pure decoration: no colliders at all, so the player
+        // sails straight through them from any side. The perched crowd up here
+        // is likewise presentation-only, never a physical obstacle.
         for (let p = 0; p < postsPerRun; p++) {
           const z = zStart + (p / (postsPerRun - 1)) * zLength
           mat.makeTranslation(railX, y + RAIL_HEIGHT / 2, z)
@@ -1119,8 +1091,6 @@ export class RevolutionsScenario implements Scenario {
       if (ledge instanceof THREE.InstancedMesh) ledge.dispose()
     }
     this.ledges.length = 0
-    for (const body of this.ledgeBodies) this.ctx?.physics.removeBody(body)
-    this.ledgeBodies.length = 0
     for (const geo of this.ledgeGeometries) geo.dispose()
     this.ledgeGeometries = []
     this.ledgeMaterial?.dispose()
@@ -1207,7 +1177,7 @@ export class RevolutionsScenario implements Scenario {
     // Behind margin: floor/road kept behind the spawn. Only the corridor
     // footprint changes, so an environment-only rebuild suffices.
     addRow("behind", "behindMargin", 0, 40, 2, () => this.scheduleEnvRebuild())
-    addRow("floors", "avgFloors", 3, 14, 1, () => this.scheduleRebuild())
+    addRow("floors", "avgFloors", 4, 30, 1, () => this.scheduleRebuild())
     addRow("lit", "litFraction", 0, 1, 0.05, () => this.scheduleRebuild())
     // Live: no rebuild needed, the streamer reads tuning.flyInSpeed each frame.
     addRow("fly-in", "flyInSpeed", 0.5, 6, 0.5, () => {})

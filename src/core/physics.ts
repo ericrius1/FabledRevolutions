@@ -148,9 +148,8 @@ export class Body {
   }
 
   /**
-   * Live-update the collision mask on every shape of this body. The player
-   * drops the Ledge bit while wall-climbing so balcony decks/rails don't snag
-   * the vertical ascent, then restores it so a normal jump can land on them.
+   * Live-update the collision mask on every shape of this body — e.g. an enemy
+   * swapping between its active, held, and decorative filters.
    */
   setCollisionMask(mask: number): void {
     const shapes = this.b3.b3Body_GetShapes(this.id);
@@ -372,8 +371,4 @@ export const Category = {
   Player: 1 << 1,
   Enemy: 1 << 2,
   Prop: 1 << 3,
-  /** Balcony decks + rails: solid so the player can land/stand on them. The
-   * player drops this bit from its mask while wall-climbing so the ascent
-   * scales past a facade's ledges without snagging on them. */
-  Ledge: 1 << 4,
 } as const;

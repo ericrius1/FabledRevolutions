@@ -78,6 +78,8 @@ export class SoundEffect extends BaseEffect {
   // Dossier preview: a self-contained charge drone (its own voice, not the live
   // `hum*` nodes) so the info panel can demo the sound without a real charge.
   private previewHum: { oscs: OscillatorNode[]; gain: GainNode } | null = null;
+  /** Pending "slowed" blast in the time-dilation A/B demo (cleared on stop). */
+  private timeShiftTimer = 0;
 
   // Voice rate limiting: a mass-kill spin fires dozens of hit events in a few
   // frames; building an oscillator graph per event stalls both the audio
@@ -699,10 +701,13 @@ export class SoundEffect extends BaseEffect {
    * Half-strength rate scaling: the blast fires as time snaps to 5×-slow, and
    * a full 5× pitch-down would bury it in mud; √rate keeps the weight.
    */
-  private megaBlast(): void {
+  private megaBlast(rateOverride?: number): void {
     if (!this.audio || !this.master || !this.noiseBuffer) return;
     const t = this.now();
-    const r = Math.sqrt(this.timeRate());
+    // `r` scales pitch (×r) and stretches every envelope (÷r). Live play uses
+    // √timeRate so bullet-time doesn't bury the blast in mud; the dossier's
+    // A/B demo passes an explicit rate to show the shift.
+    const r = rateOverride ?? Math.sqrt(this.timeRate());
 
     // Sub drop: 110 Hz falling to the floor over a second.
     const sub = this.audio.createOscillator();
@@ -838,8 +843,43 @@ export class SoundEffect extends BaseEffect {
     return 1.8;
   }
 
+  /**
+   * Time-dilation A/B for the dossier: the same blast at full speed, then again
+   * a moment later at bullet-time rate — pitched down an octave and stretched —
+   * so the ear hears exactly what slow motion does to a voice. Returns the
+   * total demo length in seconds.
+   */
+  previewTimeDilation(): number {
+    this.ensureAudio();
+    if (!this.audio) return 0;
+    if (this.timeShiftTimer) window.clearTimeout(this.timeShiftTimer);
+    this.megaBlast(1); // full speed reference
+    this.timeShiftTimer = window.setTimeout(() => {
+      this.timeShiftTimer = 0;
+      this.megaBlast(0.5); // bullet-time: an octave down, twice as long
+    }, 1900);
+    return 4.4;
+  }
+
+  /**
+   * Fire the blast at an explicit time rate for the dossier's TIME SCALE
+   * slider — the pitch and envelope lengths follow the rate the user picked, so
+   * it matches what the diagram is showing. Returns an approximate length.
+   */
+  previewBlastAtRate(rate: number): number {
+    this.ensureAudio();
+    if (!this.audio) return 0;
+    const r = Math.max(0.15, Math.min(1, rate));
+    this.megaBlast(r);
+    return Math.min(5, 1.9 / r);
+  }
+
   /** Kill any in-flight preview drone (e.g. when the dossier closes). */
   stopPreviewSound(): void {
+    if (this.timeShiftTimer) {
+      window.clearTimeout(this.timeShiftTimer);
+      this.timeShiftTimer = 0;
+    }
     if (!this.previewHum || !this.audio) return;
     const t = this.now();
     this.previewHum.gain.gain.cancelScheduledValues(t);

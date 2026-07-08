@@ -23,6 +23,7 @@ import { advanceFloorTime } from "./scenarios/arena"
 import {
   advanceGroundShockwave,
   collectShockFronts,
+  triggerBuildingImpactRipple,
   triggerGroundShockwave
 } from "./effects/groundShockwave"
 import { MegaHordeScenario } from "./scenarios/megaHorde"
@@ -58,9 +59,72 @@ const SHOCK_WAVE_UNLOCK_STRENGTH = 0.5
 /** Below this body height the player has fallen clear of the floor slab. */
 const PLAYER_FALL_DEATH_Y = -8
 
+/** Dossier tabs that a shared link may deep-link into (see infoModal.ts). */
+const INFO_TABS = ["visual", "audio"] as const
+type InfoTab = (typeof INFO_TABS)[number]
+
+/** `?tab=audio` on load → open the dossier straight to that tab, else null. */
+function readInfoDeepLink(): InfoTab | null {
+  const v = new URLSearchParams(location.search).get("tab")
+  return v && (INFO_TABS as readonly string[]).includes(v)
+    ? (v as InfoTab)
+    : null
+}
+
+/**
+ * Mirror the open dossier tab into the URL (no reload) so the address bar is
+ * always a shareable deep link; passing null strips the param on close.
+ */
+function writeInfoUrl(tab: InfoTab | null): void {
+  const url = new URL(location.href)
+  if (tab) url.searchParams.set("tab", tab)
+  else url.searchParams.delete("tab")
+  history.replaceState(null, "", url)
+}
+
 async function boot(): Promise<void> {
   const app = document.getElementById("app")
   if (!app) throw new Error("#app not found")
+
+  // Info dossier is pure DOM, so build and (for a deep link) show it before the
+  // WebGPU device and physics WASM below finish initializing: a shared
+  // `?tab=…` link is readable at once while the world boots behind the overlay.
+  // The hooks reach live game systems through refs that stay null until boot
+  // wires them further down; a pre-boot open just no-ops those. Once the loop
+  // runs it sees the modal open and idles until Escape drops into the game.
+  let infoClock: GameClock | null = null
+  let infoInput: Input | null = null
+  let infoSound: SoundEffect | null = null
+  let infoCameraMode = false
+  let pausedBeforeInfo = false
+  const infoModal = new InfoModal({
+    onOpen: () => {
+      if (!infoClock) return // still booting; the loop idles on isOpen anyway
+      pausedBeforeInfo = infoClock.paused
+      infoClock.paused = true
+      document.body.classList.add("paused")
+      infoInput?.setGameplayEnabled(false)
+    },
+    onClose: () => {
+      if (infoClock) {
+        infoClock.paused = pausedBeforeInfo
+        document.body.classList.toggle("paused", infoClock.paused)
+      }
+      if (!infoCameraMode) infoInput?.setGameplayEnabled(true)
+      writeInfoUrl(null)
+    },
+    playChargeSound: () => infoSound?.previewChargeHum() ?? 0,
+    playBlastSound: () => infoSound?.previewMegaBlast() ?? 0,
+    playTimeShiftSound: () => infoSound?.previewTimeDilation() ?? 0,
+    playBlastAtRate: (rate) => infoSound?.previewBlastAtRate(rate) ?? 0,
+    stopSounds: () => infoSound?.stopPreviewSound(),
+    getAnalyser: () => infoSound?.getAnalyser() ?? null,
+    onTabChange: (tab) => writeInfoUrl(tab as InfoTab)
+  })
+  document.body.appendChild(infoModal.button)
+  document.body.appendChild(infoModal.root)
+  const deepLinkTab = readInfoDeepLink()
+  if (deepLinkTab) infoModal.open(deepLinkTab)
 
   // ---- Renderer + scene ----
   // WebGPU-first: TSL node materials everywhere. WebGPURenderer transparently
@@ -131,6 +195,9 @@ async function boot(): Promise<void> {
   const diveSmash = new DiveSmash(bus, clock, physics)
   bus.on("dive-impact", ({ origin, power, mega }) => {
     triggerGroundShockwave(origin, power, mega)
+  })
+  bus.on("wall-jump", ({ origin, speed }) => {
+    triggerBuildingImpactRipple(origin, speed)
   })
   bus.on("mega-release", ({ origin }) => {
     triggerGroundShockwave(origin, MEGA_RELEASE_SHOCK_POWER, true)
@@ -231,28 +298,12 @@ async function boot(): Promise<void> {
     document.body.appendChild(sfxVolume.root)
   }
 
-  // Info dossier: opening pauses the game and suspends gameplay input. Closing
+  // Hand the dossier (built before the awaits above) its live game systems.
+  // From here on opening pauses the game and suspends gameplay input; closing
   // restores the prior pause state.
-  let pausedBeforeInfo = false
-  const infoModal = new InfoModal({
-    onOpen: () => {
-      pausedBeforeInfo = clock.paused
-      clock.paused = true
-      document.body.classList.add("paused")
-      input.setGameplayEnabled(false)
-    },
-    onClose: () => {
-      clock.paused = pausedBeforeInfo
-      document.body.classList.toggle("paused", clock.paused)
-      if (!cameraMode) input.setGameplayEnabled(true)
-    },
-    playChargeSound: () => soundFx?.previewChargeHum() ?? 0,
-    playBlastSound: () => soundFx?.previewMegaBlast() ?? 0,
-    stopSounds: () => soundFx?.stopPreviewSound(),
-    getAnalyser: () => soundFx?.getAnalyser() ?? null
-  })
-  document.body.appendChild(infoModal.button)
-  document.body.appendChild(infoModal.root)
+  infoClock = clock
+  infoInput = input
+  infoSound = soundFx ?? null
 
   const socialLinks = new SocialLinks()
   document.body.appendChild(socialLinks.root)
@@ -326,6 +377,7 @@ async function boot(): Promise<void> {
     }
     if (input.consumeCameraToggle() && !infoModal.isOpen) {
       cameraMode = !cameraMode
+      infoCameraMode = cameraMode // keep the dossier's close logic in sync
       if (cameraMode) {
         manualCamera.enter()
         input.setGameplayEnabled(false)

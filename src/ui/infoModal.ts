@@ -19,10 +19,19 @@ export interface InfoModalHooks {
   playChargeSound?(): number
   /** Play the game's mega-blast voice once for the diagram. Returns seconds. */
   playBlastSound?(): number
+  /** Play the blast at full speed then bullet-time. Returns total seconds. */
+  playTimeShiftSound?(): number
+  /** Play the blast at a specific time rate (for the slider). Returns seconds. */
+  playBlastAtRate?(rate: number): number
   /** Stop any in-flight preview sound (called on close). */
   stopSounds?(): void
   /** Master-bus analyser for drawing the live audio viz. */
   getAnalyser?(): AnalyserNode | null
+  /**
+   * The active dossier tab changed (on open or a tab click). Lets the host
+   * mirror it into the URL so any tab is a shareable deep link.
+   */
+  onTabChange?(tab: string): void
 }
 
 const RAIN_GLYPHS =
@@ -40,6 +49,10 @@ export class InfoModal {
   private synthDiagramRaf = 0
   /** rAF handle for the live audio visualization under a diagram. */
   private vizRaf = 0
+  /** Time-scale slider override: once set, it wins over scroll for that diagram. */
+  private trManualRate: number | null = null
+  /** Charge-level meter override (0…1): once set, it wins over scroll. */
+  private chargeManual: number | null = null
   /** Per play-button timers that clear the transient "playing" state. */
   private previewTimers = new Map<HTMLButtonElement, number>()
 
@@ -47,9 +60,9 @@ export class InfoModal {
     this.button = document.createElement("button")
     this.button.className = "info-button"
     this.button.type = "button"
-    this.button.title = "About this project — systems, physics, rendering (Esc)"
-    this.button.setAttribute("aria-label", "About this project")
-    this.button.innerHTML = `<span class="info-button-glyph">i</span><span class="info-button-ring"></span>`
+    this.button.title = "Behind the scenes — systems, physics, rendering (Esc)"
+    this.button.setAttribute("aria-label", "Behind the scenes")
+    this.button.innerHTML = `<span class="info-button-glyph">i</span><span class="info-button-label">Behind the scenes</span><span class="info-button-ring"></span>`
     this.button.addEventListener("click", () => this.open())
 
     this.root = document.createElement("div")
@@ -62,17 +75,25 @@ export class InfoModal {
     return this.openState
   }
 
-  open(): void {
+  open(tab: string = "visual"): void {
     if (this.openState) return
     this.openState = true
     this.root.hidden = false
     document.body.classList.add("info-open")
     this.hooks.onOpen()
     this.startRain()
-    // Reset scroll and move focus into the dialog for keyboard users.
-    this.root.querySelector<HTMLElement>(".info-body")?.scrollTo({ top: 0 })
+    // Fresh session: the time-scale slider hands control back to scroll, and
+    // the diagram resets to ×1.0 until scroll or a drag moves it.
+    this.trManualRate = null
+    const trDiagram = this.root.querySelector<HTMLElement>(".synth-timerate-scroll")
+    if (trDiagram) this.applyTimeRate(trDiagram, 1)
+    // Same for the charge-level meter: scroll drives it again until dragged.
+    this.chargeManual = null
+    // Open on the requested tab (Visual by default — deep links can jump
+    // straight to another); reset scroll and move focus into the dialog for
+    // keyboard users.
+    this.selectTab(tab)
     this.root.querySelector<HTMLButtonElement>(".info-close")?.focus()
-    this.queueSynthDiagramUpdate()
   }
 
   close(): void {
@@ -115,16 +136,28 @@ export class InfoModal {
         </div>
         <button class="info-close" type="button" aria-label="Close">[ ESC ]</button>
       </header>
+      <div class="info-tabs" role="tablist" aria-label="Dossier sections">
+        <button class="info-tab is-active" type="button" role="tab" data-tab="visual" aria-selected="true">
+          <span class="info-tab-num">01</span> Visual &amp; systems
+        </button>
+        <button class="info-tab" type="button" role="tab" data-tab="audio" aria-selected="false">
+          <span class="info-tab-num">02</span> Audio lab
+        </button>
+      </div>
       <div class="info-body">
-        ${this.sectionJuice()}
-        ${this.sectionEffects()}
-        ${this.sectionArchitecture()}
-        ${this.sectionClocks()}
-        ${this.sectionPhysics()}
-        ${this.sectionThreads()}
-        ${this.sectionRender()}
-        ${this.sectionDesign()}
-        ${this.sectionSoundSynthesis()}
+        <div class="info-tab-panel" role="tabpanel" data-panel="visual">
+          ${this.sectionJuice()}
+          ${this.sectionEffects()}
+          ${this.sectionArchitecture()}
+          ${this.sectionClocks()}
+          ${this.sectionPhysics()}
+          ${this.sectionThreads()}
+          ${this.sectionRender()}
+          ${this.sectionDesign()}
+        </div>
+        <div class="info-tab-panel" role="tabpanel" data-panel="audio" hidden>
+          ${this.sectionSoundSynthesis()}
+        </div>
         <footer class="info-footer">
           <span>Fabled Revolutions · MIT · three.js + box3d.js</span>
           <span class="info-footer-blink">▮</span>
@@ -146,6 +179,12 @@ export class InfoModal {
       })
     window.addEventListener("resize", () => this.queueSynthDiagramUpdate())
 
+    // Top tabs: split the dossier into the visual/systems overview and the
+    // audio lab, so the long sound diagrams don't bury the combat writeup.
+    modal.querySelectorAll<HTMLButtonElement>(".info-tab").forEach((tab) => {
+      tab.addEventListener("click", () => this.selectTab(tab.dataset.tab ?? "visual"))
+    })
+
     // Diagram "play" buttons: fire the real game voice once, then reset the
     // button's playing state after the sound's own length.
     modal
@@ -153,15 +192,140 @@ export class InfoModal {
       .forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation()
-          const kind = btn.dataset.preview === "blast" ? "blast" : "charge"
-          const seconds =
-            kind === "blast"
-              ? (this.hooks.playBlastSound?.() ?? 0)
-              : (this.hooks.playChargeSound?.() ?? 0)
+          const preview = btn.dataset.preview
+          let seconds = 0
+          if (preview === "blast") seconds = this.hooks.playBlastSound?.() ?? 0
+          else if (preview === "timeshift")
+            seconds = this.hooks.playTimeShiftSound?.() ?? 0
+          else seconds = this.hooks.playChargeSound?.() ?? 0
+          const kind =
+            preview === "blast"
+              ? "blast"
+              : preview === "timeshift"
+                ? "timerate"
+                : "charge"
           this.flashPreviewButton(btn, seconds)
           if (seconds > 0) this.startViz(kind, seconds)
         })
       })
+
+    this.setupTimeRateSlider(modal)
+    this.setupChargeSlider(modal)
+  }
+
+  /**
+   * Make the LIVE CHARGE level meter a draggable slider: dragging sets the
+   * charge level directly (overriding scroll) so the fill tracks the cursor and
+   * the whole patch — pitch, detune, cutoff, LFO, waves — moves live with it.
+   */
+  private setupChargeSlider(modal: HTMLElement): void {
+    const diagram = modal.querySelector<HTMLElement>(".synth-charge-scroll")
+    const hit = diagram?.querySelector<SVGGraphicsElement>(".sd-meter-hit")
+    const track = diagram?.querySelector<SVGGraphicsElement>(".sd-meter-shell")
+    if (!diagram || !hit || !track) return
+    let dragging = false
+    const apply = (clientX: number): void => {
+      const r = track.getBoundingClientRect()
+      this.chargeManual = clamp01((clientX - r.left) / Math.max(1, r.width))
+      this.updateChargeStage(diagram, this.chargeManual)
+    }
+    hit.addEventListener("pointerdown", (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragging = true
+      hit.setPointerCapture(e.pointerId)
+      diagram.classList.add("cs-grabbing")
+      apply(e.clientX)
+    })
+    hit.addEventListener("pointermove", (e) => {
+      if (dragging) apply(e.clientX)
+    })
+    const end = (e: PointerEvent): void => {
+      if (!dragging) return
+      dragging = false
+      diagram.classList.remove("cs-grabbing")
+      try {
+        hit.releasePointerCapture(e.pointerId)
+      } catch {
+        // pointer already released
+      }
+    }
+    hit.addEventListener("pointerup", end)
+    hit.addEventListener("pointercancel", end)
+  }
+
+  /**
+   * Make the TIME SCALE meter a draggable slider: dragging sets the rate
+   * directly (overriding scroll) so the waveform, envelope, clocks, and
+   * readouts all move live, and releasing plays the blast at that rate to hear
+   * the shift.
+   */
+  private setupTimeRateSlider(modal: HTMLElement): void {
+    const diagram = modal.querySelector<HTMLElement>(".synth-timerate-scroll")
+    const hit = diagram?.querySelector<SVGGraphicsElement>(".tr-meter-hit")
+    const track = diagram?.querySelector<SVGGraphicsElement>(".tr-meter-shell")
+    if (!diagram || !hit || !track) return
+    let dragging = false
+    const rateAt = (clientX: number): number => {
+      const r = track.getBoundingClientRect()
+      const f = clamp01((clientX - r.left) / Math.max(1, r.width))
+      return mix(0.18, 1, f) // left = ×0.18 bullet, right = ×1.0 normal
+    }
+    const apply = (clientX: number): void => {
+      this.trManualRate = rateAt(clientX)
+      this.applyTimeRate(diagram, this.trManualRate)
+    }
+    hit.addEventListener("pointerdown", (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragging = true
+      hit.setPointerCapture(e.pointerId)
+      diagram.classList.add("tr-grabbing")
+      apply(e.clientX)
+    })
+    hit.addEventListener("pointermove", (e) => {
+      if (dragging) apply(e.clientX)
+    })
+    const end = (e: PointerEvent): void => {
+      if (!dragging) return
+      dragging = false
+      diagram.classList.remove("tr-grabbing")
+      try {
+        hit.releasePointerCapture(e.pointerId)
+      } catch {
+        // pointer already released
+      }
+      // Hear the result: play the blast at the chosen rate, viz it.
+      const rate = this.trManualRate ?? 1
+      const secs = this.hooks.playBlastAtRate?.(rate) ?? 0
+      if (secs > 0) this.startViz("timerate", secs)
+    }
+    hit.addEventListener("pointerup", end)
+    hit.addEventListener("pointercancel", end)
+  }
+
+  /** Switch the visible dossier tab and reset the scroll for a fresh read. */
+  private selectTab(name: string): void {
+    const tab = name === "audio" ? "audio" : "visual"
+    // Leaving the audio tab: silence any preview and clear its viz.
+    if (tab !== "audio") {
+      this.hooks.stopSounds?.()
+      this.stopViz()
+    }
+    for (const btn of this.root.querySelectorAll<HTMLButtonElement>(".info-tab")) {
+      const active = btn.dataset.tab === tab
+      btn.classList.toggle("is-active", active)
+      btn.setAttribute("aria-selected", String(active))
+    }
+    for (const panel of this.root.querySelectorAll<HTMLElement>(".info-tab-panel")) {
+      panel.hidden = panel.dataset.panel !== tab
+    }
+    // Start each tab from the top; the sound diagrams need a layout pass now
+    // that they're finally visible (they measure to 0 while hidden).
+    this.root.querySelector<HTMLElement>(".info-body")?.scrollTo({ top: 0 })
+    this.queueSynthDiagramUpdate()
+    // Report the active tab so the host can mirror it into the URL.
+    this.hooks.onTabChange?.(tab)
   }
 
   /** Mark a play button as sounding for `seconds`, then clear it. */
@@ -189,12 +353,19 @@ export class InfoModal {
    * broadband burst) with an oscilloscope trace over the top. Reads the master
    * analyser tap the game already mixes into — it IS the sound, not a fake.
    */
-  private startViz(kind: "charge" | "blast", seconds: number): void {
+  private startViz(
+    kind: "charge" | "blast" | "timerate",
+    seconds: number
+  ): void {
     this.stopViz()
     const analyser = this.hooks.getAnalyser?.()
-    const wrap = this.root.querySelector<HTMLElement>(
-      kind === "blast" ? ".synth-blast-scroll" : ".synth-charge-scroll"
-    )
+    const wrapClass =
+      kind === "blast"
+        ? ".synth-blast-scroll"
+        : kind === "timerate"
+          ? ".synth-timerate-scroll"
+          : ".synth-charge-scroll"
+    const wrap = this.root.querySelector<HTMLElement>(wrapClass)
     const canvas = wrap?.querySelector<HTMLCanvasElement>(".synth-viz")
     const ctx = canvas?.getContext("2d")
     if (!analyser || !canvas || !ctx) return
@@ -416,18 +587,21 @@ export class InfoModal {
         <p>
           This part is extra for fun: the combat lesson above is about feel and
           architecture; the audio layer is a tiny synthesis lab hiding inside the
-          same event system. There are no WAV or MP3 files in the effect stack.
-          <code>SoundEffect</code> builds short WebAudio graphs at the moment of
-          impact.
+          same event system. Every sound in the game — the charge hum, the
+          layered blast, the bullet-time slur — is the same handful of parts
+          wired up fresh at the moment of impact. There are no WAV or MP3 files.
+          Nothing is baked: <code>SoundEffect</code> <em>performs</em> each voice
+          live as a short WebAudio graph.
         </p>
       </div>
       <p>
-        Most voices here are made from four reusable pieces: an oscillator for
-        tonal body, a noise burst for air or crackle, filters for color, and
-        gain envelopes for motion. The sound is <em>performed</em>, not played
-        back. Slow motion lowers playback rates and stretches envelopes; charge
-        level keeps pushing oscillator pitch, detune, filter cutoff, and LFO
-        throb while the button is held.
+        Those parts are just four reusable pieces: an oscillator for tonal body,
+        a noise burst for air or crackle, filters for color, and gain envelopes
+        for motion. Because the sound is performed rather than played back, it
+        can answer the exact combat events that move the particles, the camera,
+        and the clock: slow motion lowers playback rates and stretches envelopes,
+        and charge level keeps pushing oscillator pitch, detune, filter cutoff,
+        and LFO throb while the button is held.
       </p>
       <p>
         The important WebAudio trick is that nearly every number is scheduled on
@@ -486,6 +660,42 @@ export class InfoModal {
         The same code can scale a hit, a kill, a charged release, or a slow-motion
         moment without exporting a new file for every case. Instead of choosing
         one recording, the game chooses a patch and pushes live values through it.
+      </p>
+      <p>
+        The most fun trick that falls out of performing sound instead of playing
+        it back is <strong>time dilation</strong>. When a mega kill drops the
+        world into bullet time, the game doesn't cross-fade to a special
+        slow-motion recording — there isn't one. It hands every new voice a single
+        number, the <code>timeRate</code>, and that number quietly bends the whole
+        patch: oscillator frequencies are multiplied by it, so pitch sinks; every
+        envelope duration is divided by it, so attacks and tails stretch; sample
+        <code>playbackRate</code> is scaled by it, so noise bursts slur downward.
+        One control, and the same hit becomes a deep, syrupy version of itself —
+        the classic phone slow-motion sound, generated live.
+      </p>
+      <p>
+        Because it is a multiplier and not a switch, it also composes cleanly with
+        hit stop's separate freeze and with the charge patch's live tracking: a
+        blast fired mid-slowdown reads its rate at that instant and schedules its
+        curves accordingly. The one wrinkle is that a naïve 5× drop turns the
+        blast to mud, so the release uses <code>√rate</code> — enough pitch sink to
+        feel the weight without losing the transient. Scroll the panel below to
+        push the rate from normal down to bullet time, then hit play to hear the
+        same blast fire at full speed and then slowed.
+      </p>
+      ${this.soundTimeStage()}
+      <p class="synth-closer-lead">
+        That is the same lesson as the visuals in the other tab, just heard
+        instead of seen: many small, honest pieces, all answering one event, add
+        up to something the body reads as real. What still surprises me is how
+        little it costs — the whole lab is one module of WebAudio graphs with no
+        audio assets at all, quietly reacting to the same events as everything
+        else on screen.
+      </p>
+      <p class="mx-dim">
+        Want to go deeper on the synthesis itself? The two links below are the
+        best places to start — one to play with oscillators, filters, and
+        envelopes by ear, one to see the same ideas in Web Audio code.
       </p>
       <div class="info-link-grid" aria-label="Further learning links">
         <a href="https://learningsynths.ableton.com/" target="_blank" rel="noopener">
@@ -554,6 +764,13 @@ export class InfoModal {
                  aria-label="Sticky animated WebAudio charge synthesis diagram showing oscillators, filter, gain modulation, and output routing">
               ${defs}
               <clipPath id="synth-charge-clip"><rect x="24" y="18" width="1032" height="568" rx="8"/></clipPath>
+              <clipPath id="csc-sawA"><rect x="70" y="194" width="214" height="38" rx="5"/></clipPath>
+              <clipPath id="csc-sawB"><rect x="70" y="276" width="214" height="38" rx="5"/></clipPath>
+              <clipPath id="csc-sub"><rect x="70" y="372" width="214" height="48" rx="5"/></clipPath>
+              <clipPath id="csc-filter"><rect x="402" y="218" width="204" height="104" rx="5"/></clipPath>
+              <clipPath id="csc-lfo"><rect x="728" y="210" width="232" height="74" rx="5"/></clipPath>
+              <clipPath id="csc-autoA"><rect x="430" y="500" width="570" height="28" rx="5"/></clipPath>
+              <clipPath id="csc-autoB"><rect x="430" y="542" width="570" height="28" rx="5"/></clipPath>
               <g clip-path="url(#synth-charge-clip)">
               <text x="34" y="42" class="dg-title">LIVE CHARGE HUM PATCH</text>
               <text x="34" y="64" class="dg-sub">continuous voice, updated every frame</text>
@@ -562,6 +779,7 @@ export class InfoModal {
                 <rect x="734" y="30" width="286" height="18" rx="4" class="sd-meter-shell"/>
                 <rect x="734" y="30" width="286" height="18" rx="4" class="sd-charge-fill"/>
                 <line x1="877" y1="26" x2="877" y2="54" class="sd-meter-tick"/>
+                <rect x="726" y="22" width="302" height="34" rx="9" class="sd-meter-hit"/>
                 <text x="734" y="70" class="dg-sub">0</text>
                 <text x="866" y="70" class="dg-sub">1 full</text>
                 <text x="994" y="70" class="dg-sub">2 mega</text>
@@ -573,15 +791,15 @@ export class InfoModal {
                 <text x="70" y="144" class="dg-title">OSCILLATOR RACK</text>
                 <text x="70" y="166" class="dg-sub">tone body before filtering</text>
                 <rect x="70" y="194" width="214" height="38" rx="5" class="cs-scope"/>
-                <path d="M86 220 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave"/>
+                <g clip-path="url(#csc-sawA)"><path d="M86 220 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave"/></g>
                 <text x="70" y="258" class="dg-hot">saw A</text>
                 <text x="132" y="258" class="dg-sub">55 -> 110 Hz</text>
                 <rect x="70" y="276" width="214" height="38" rx="5" class="cs-scope"/>
-                <path d="M86 302 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave sd-wave-alt cs-detune-wave"/>
+                <g clip-path="url(#csc-sawB)"><path d="M86 302 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave sd-wave-alt cs-detune-wave"/></g>
                 <text x="70" y="340" class="dg-hot">saw B</text>
                 <text x="132" y="340" class="dg-sub">detune <tspan class="sd-detune-readout">3</tspan> cents</text>
                 <rect x="70" y="372" width="214" height="48" rx="5" class="cs-scope"/>
-                <path d="M88 401 c16 -23 32 -23 48 0 s32 23 48 0 s32 -23 48 0" class="sd-wave sd-sub-wave"/>
+                <g clip-path="url(#csc-sub)"><path d="M88 401 c16 -23 32 -23 48 0 s32 23 48 0 s32 -23 48 0" class="sd-wave sd-sub-wave"/></g>
                 <text x="70" y="448" class="dg-hot">sine sub</text>
                 <text x="152" y="448" class="dg-sub">half frequency</text>
               </g>
@@ -593,10 +811,12 @@ export class InfoModal {
                 <text x="402" y="164" class="dg-title">LOWPASS FILTER</text>
                 <text x="402" y="186" class="dg-sub">cutoff opens as charge rises</text>
                 <rect x="402" y="218" width="204" height="104" rx="5" class="cs-scope"/>
+                <g clip-path="url(#csc-filter)">
                 <line x1="420" y1="292" x2="588" y2="292" class="dg-line"/>
                 <line x1="420" y1="252" x2="588" y2="252" class="dg-line"/>
                 <path d="M420 292 C458 290 486 276 508 252 S548 222 588 220" class="sd-filter-curve" pathLength="1"/>
                 <circle cx="430" cy="290" r="7" class="sd-filter-dot"/>
+                </g>
                 <text x="402" y="352" class="dg-hot">cutoff <tspan class="sd-cutoff-readout">180</tspan> Hz</text>
                 <text x="402" y="374" class="dg-sub">darker start, brighter finish</text>
               </g>
@@ -608,7 +828,7 @@ export class InfoModal {
                 <text x="728" y="158" class="dg-title">GAIN + LFO</text>
                 <text x="728" y="180" class="dg-sub">envelope plus animated throb</text>
                 <rect x="728" y="210" width="232" height="74" rx="5" class="cs-scope"/>
-                <path d="M748 260 C778 216 808 216 838 260 S896 304 940 238" class="sd-lfo-wave" pathLength="1"/>
+                <g clip-path="url(#csc-lfo)"><path d="M744 247 C777 215 811 215 844 247 S911 279 944 247" class="sd-lfo-wave" pathLength="1"/></g>
                 <text x="728" y="314" class="dg-hot">LFO <tspan class="sd-lfo-readout">1.8</tspan> Hz</text>
                 <text x="828" y="314" class="dg-sub">modulates gain</text>
               </g>
@@ -637,9 +857,11 @@ export class InfoModal {
                 <text x="300" y="570" class="dg-hot">gain throb</text>
                 <rect x="430" y="500" width="570" height="28" rx="5" class="cs-scope"/>
                 <rect x="430" y="542" width="570" height="28" rx="5" class="cs-scope"/>
-                <path d="M448 520 C548 518 646 512 736 507 S892 505 982 506" class="cs-auto-line cs-auto-pitch" pathLength="1"/>
-                <path d="M448 562 C540 562 610 554 676 540 S812 520 982 518" class="cs-auto-line cs-auto-cutoff" pathLength="1"/>
-                <path d="M448 553 C486 540 524 540 562 553 S638 566 676 553 S752 540 790 553 S866 566 904 553 S960 540 982 548" class="cs-auto-line cs-auto-lfo" pathLength="1"/>
+                <g clip-path="url(#csc-autoA)"><path d="M448 520 C548 518 646 512 736 507 S892 505 982 506" class="cs-auto-line cs-auto-pitch" pathLength="1"/></g>
+                <g clip-path="url(#csc-autoB)">
+                <path d="M448 564 C560 562 660 556 760 550 S900 544 982 545" class="cs-auto-line cs-auto-cutoff" pathLength="1"/>
+                <path d="M448 556 C486 547 524 547 562 556 S638 565 676 556 S752 547 790 556 S866 565 904 556 S960 549 982 555" class="cs-auto-line cs-auto-lfo" pathLength="1"/>
+                </g>
               </g>
               </g>
             </svg>
@@ -760,6 +982,159 @@ export class InfoModal {
               </g>
             </svg>
             <canvas class="synth-viz" data-viz="blast" aria-hidden="true"></canvas>
+          </div>
+        </div>
+      </div>`
+  }
+
+  private soundTimeStage(): string {
+    const { defs } = diagDefs()
+    // Pitch scope sine, drawn in local coords (positioned by a <g> translate);
+    // a CSS scaleX stretches it as the rate drops — longer wavelength, lower pitch.
+    const trSine = (w: number, amp: number, wl: number): string => {
+      let d = ""
+      for (let x = 0; x <= w; x += 4) {
+        const y = -amp * Math.sin((x / wl) * Math.PI * 2)
+        d += (x === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1)
+      }
+      return d
+    }
+    const wave = trSine(548, 40, 78)
+    // Envelope: near-instant attack to a peak, then a decay to the floor.
+    const env = "M0 102 L10 8 C70 8 150 96 300 102"
+    // Fixed wall-clock ticks and the stretchable game/audio ticks (same count).
+    const wallTicks = Array.from(
+      { length: 21 },
+      (_, i) =>
+        `<line x1="${220 + i * 40}" y1="392" x2="${220 + i * 40}" y2="408" class="dg-tick"/>`
+    ).join("")
+    const gameTicks = Array.from(
+      { length: 21 },
+      (_, i) =>
+        `<line x1="${i * 40}" y1="472" x2="${i * 40}" y2="488" class="dg-tick"/>`
+    ).join("")
+    return `
+      <div class="synth-sticky-scroll synth-timerate-scroll" data-synth-diagram="timerate-stage">
+        <div class="synth-sticky-stage">
+          <div class="synth-stage-copy">
+            <span class="info-title-tag">DIAGRAM 3 / TIME DILATION</span>
+            <h3 class="synth-stage-title">When the world slows, so does the sound</h3>
+            <button class="synth-preview-btn" type="button" data-preview="timeshift"
+                    aria-label="Play the blast at full speed then at bullet-time speed">
+              <span class="synth-preview-icon" aria-hidden="true"></span>
+              <span class="synth-preview-label">Play normal + slowed</span>
+            </button>
+            <div class="synth-stage-steps">
+              <p class="synth-stage-line tr-copy-rate">
+                <strong>One rate.</strong>
+                A single <code>timeRate</code> multiplies pitch and divides
+                duration for every new voice.
+              </p>
+              <p class="synth-stage-line tr-copy-pitch">
+                <strong>Pitch sinks.</strong>
+                Lower oscillator and playback frequency give a deeper, slurred
+                version of the same hit.
+              </p>
+              <p class="synth-stage-line tr-copy-env">
+                <strong>Envelopes stretch.</strong>
+                Attacks and tails lengthen, so the impact unfolds in slow motion.
+              </p>
+              <p class="synth-stage-line tr-copy-sqrt">
+                <strong>Eased on the blast.</strong>
+                A full-rate drop would turn the release to mud, so it sinks only
+                part way.
+              </p>
+            </div>
+            <dl class="synth-readouts">
+              <div>
+                <dt>rate</dt>
+                <dd><span class="tr-rate-readout">&times;1.00</span></dd>
+              </div>
+              <div>
+                <dt>pitch</dt>
+                <dd><span class="tr-hz-readout">220</span> Hz</dd>
+              </div>
+              <div>
+                <dt>stretch</dt>
+                <dd><span class="tr-stretch-readout">1.00</span>&times;</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="info-scroll synth-scroll-diagram">
+            <svg class="info-diagram synth-diagram synth-stage-diagram synth-timerate-diagram" viewBox="0 0 1080 560" width="1080" height="560" preserveAspectRatio="xMidYMin meet" role="img"
+                 aria-label="Sticky time-dilation diagram: a time-rate meter drives a stretching waveform, a stretching envelope, and two clocks whose audio ticks spread as the rate slows">
+              ${defs}
+              <clipPath id="tr-wave-clip"><rect x="74" y="190" width="548" height="108" rx="6"/></clipPath>
+              <clipPath id="tr-env-clip"><rect x="700" y="190" width="308" height="108" rx="6"/></clipPath>
+              <clipPath id="tr-clock-clip"><rect x="220" y="464" width="800" height="34"/></clipPath>
+
+              <text x="34" y="40" class="dg-title">TIME DILATION ENGINE</text>
+              <text x="34" y="62" class="dg-sub">one rate bends every new voice</text>
+
+              <g class="tr-meter">
+                <text x="700" y="34" class="dg-hot">TIME SCALE</text>
+                <text x="1020" y="34" class="dg-sub tr-hint" text-anchor="end">◂ drag ▸</text>
+                <rect x="700" y="44" width="320" height="16" rx="8" class="tr-meter-shell"/>
+                <rect x="700" y="44" width="320" height="16" rx="8" class="tr-meter-fill"/>
+                <text x="700" y="80" class="dg-sub">&times;0.2 bullet</text>
+                <text x="1020" y="80" class="dg-sub" text-anchor="end">&times;1.0 normal</text>
+                <text x="860" y="108" class="dg-hot" text-anchor="middle">rate <tspan class="tr-rate-readout">&times;1.00</tspan></text>
+                <g class="tr-marker" transform="translate(320 0)">
+                  <line x1="700" y1="38" x2="700" y2="66" class="tr-marker-line"/>
+                  <circle cx="700" cy="52" r="9" class="tr-marker-dot"/>
+                </g>
+                <rect x="686" y="40" width="348" height="30" rx="10" class="tr-meter-hit"/>
+              </g>
+
+              <g class="tr-panel tr-panel-pitch">
+                <rect x="48" y="120" width="604" height="224" rx="8" class="tr-node"/>
+                <text x="74" y="154" class="dg-title">OSCILLATOR PITCH</text>
+                <text x="74" y="176" class="dg-sub">frequency &times; rate &mdash; the tone drops</text>
+                <rect x="74" y="190" width="548" height="108" rx="6" class="tr-scope"/>
+                <line x1="74" y1="244" x2="622" y2="244" class="dg-line"/>
+                <g clip-path="url(#tr-wave-clip)">
+                  <g transform="translate(74 244)">
+                    <path class="tr-wave" d="${wave}"/>
+                  </g>
+                </g>
+                <text x="74" y="330" class="dg-hot">osc <tspan class="tr-hz-readout">220</tspan> Hz</text>
+                <text x="360" y="330" class="dg-sub">from 220 Hz at &times;1.0</text>
+              </g>
+
+              <g class="tr-panel tr-panel-env">
+                <rect x="676" y="120" width="356" height="224" rx="8" class="tr-node"/>
+                <text x="700" y="154" class="dg-title">ENVELOPE LENGTH</text>
+                <text x="700" y="176" class="dg-sub">duration &divide; rate</text>
+                <rect x="700" y="190" width="308" height="108" rx="6" class="tr-scope"/>
+                <g clip-path="url(#tr-env-clip)">
+                  <g transform="translate(700 190)">
+                    <path class="tr-env" d="${env}"/>
+                  </g>
+                </g>
+                <text x="700" y="330" class="dg-hot">tail <tspan class="tr-ms-readout">180</tspan> ms</text>
+              </g>
+
+              <g class="tr-clocks">
+                <text x="48" y="404" class="dg-hot">WALL CLOCK</text>
+                <text x="48" y="426" class="dg-sub">real time</text>
+                <text x="48" y="446" class="dg-sub">never bends</text>
+                <line x1="220" y1="400" x2="1020" y2="400" class="dg-line"/>
+                ${wallTicks}
+
+                <text x="48" y="484" class="dg-hot">AUDIO / GAME</text>
+                <text x="48" y="506" class="dg-sub">pitch &middot; playback</text>
+                <text x="48" y="526" class="dg-sub">envelope length</text>
+                <line x1="220" y1="480" x2="1020" y2="480" class="dg-line"/>
+                <g clip-path="url(#tr-clock-clip)">
+                  <g transform="translate(220 0)">
+                    <g class="tr-game-ticks">${gameTicks}</g>
+                  </g>
+                </g>
+
+                <text x="220" y="548" class="dg-sub">same window &mdash; audio events spread apart as the clock slows</text>
+              </g>
+            </svg>
+            <canvas class="synth-viz" data-viz="timerate" aria-hidden="true"></canvas>
           </div>
         </div>
       </div>`
@@ -1126,13 +1501,19 @@ export class InfoModal {
         this.updateChargeStage(diagram, progress)
       } else if (diagram.dataset.synthDiagram === "blast-stage") {
         this.updateBlastStage(diagram, progress)
+      } else if (diagram.dataset.synthDiagram === "timerate-stage") {
+        this.updateTimeRateStage(diagram, progress)
       }
     }
   }
 
   private updateChargeStage(diagram: HTMLElement, progress: number): void {
-    const chargeProgress = clamp01(progress)
-    const chargeEase = smooth01(chargeProgress)
+    // Once the user grabs the level meter, their level wins over scroll and
+    // scrubs linearly (the fill tracks the cursor), driving the whole patch.
+    const chargeProgress =
+      this.chargeManual != null ? this.chargeManual : clamp01(progress)
+    const chargeEase =
+      this.chargeManual != null ? this.chargeManual : smooth01(chargeProgress)
     const chargeLevel = Math.min(2, chargeEase * 2.05)
     const cutoffHz = Math.round(180 + chargeEase * 980)
     const detuneCents = Math.round(3 + chargeEase * 25)
@@ -1202,6 +1583,59 @@ export class InfoModal {
     diagram
       .querySelector<SVGElement>(".bd-playhead")
       ?.setAttribute("transform", `translate(${340 + blastProgress * 660} 0)`)
+  }
+
+  private updateTimeRateStage(diagram: HTMLElement, progress: number): void {
+    // Once the user grabs the TIME SCALE slider, their rate wins over scroll.
+    if (this.trManualRate != null) {
+      this.applyTimeRate(diagram, this.trManualRate)
+      return
+    }
+    // Scroll pushes the rate from 1.0 (normal) down to 0.18 (bullet time).
+    this.applyTimeRate(diagram, mix(1, 0.18, smooth01(clamp01(progress))))
+  }
+
+  /** Paint the time-dilation diagram for a given rate (0.18…1). */
+  private applyTimeRate(diagram: HTMLElement, rate: number): void {
+    const r = Math.max(0.18, Math.min(1, rate))
+    const stretch = 1 / r
+    const hz = Math.round(220 * r)
+    const ms = Math.round(180 / r)
+    // Normalized slowdown, 0 at ×1.0 → 1 at ×0.18: drives marker + reveals.
+    const slow = clamp01((1 - r) / 0.82)
+    // Wavelength / envelope / tick spacing all grow as 1/rate; cap so the
+    // clipped scopes don't scale into absurdity near the low end.
+    const visualStretch = Math.min(4.6, stretch)
+    diagram.style.setProperty("--rate", r.toFixed(3))
+    diagram.style.setProperty("--wave-stretch", visualStretch.toFixed(3))
+    diagram.style.setProperty("--env-stretch", visualStretch.toFixed(3))
+    diagram.style.setProperty("--tick-stretch", visualStretch.toFixed(3))
+    // Reveal the copy lines as the rate drops through their thresholds.
+    diagram.style.setProperty("--tr-step-rate", fmt(mix(0.5, 1, clamp01(slow * 3))))
+    diagram.style.setProperty("--tr-step-pitch", fmt(mix(0.2, 1, clamp01((slow - 0.12) * 4))))
+    diagram.style.setProperty("--tr-step-env", fmt(mix(0.2, 1, clamp01((slow - 0.34) * 4))))
+    diagram.style.setProperty("--tr-step-sqrt", fmt(mix(0.18, 1, clamp01((slow - 0.58) * 4))))
+    diagram
+      .querySelectorAll(".tr-rate-readout")
+      .forEach((el) => el.replaceChildren(`×${r.toFixed(2)}`))
+    diagram
+      .querySelectorAll(".tr-hz-readout")
+      .forEach((el) => el.replaceChildren(String(hz)))
+    diagram
+      .querySelectorAll(".tr-ms-readout")
+      .forEach((el) => el.replaceChildren(String(ms)))
+    diagram
+      .querySelectorAll(".tr-stretch-readout")
+      .forEach((el) => el.replaceChildren(stretch.toFixed(2)))
+    // Marker sits right at ×1.0 and slides left as the world slows; the fill
+    // trails it from the left so a fuller bar reads as faster time.
+    const markerX = (1 - slow) * 320
+    diagram
+      .querySelector<SVGElement>(".tr-marker")
+      ?.setAttribute("transform", `translate(${markerX.toFixed(1)} 0)`)
+    diagram
+      .querySelector<SVGElement>(".tr-meter-fill")
+      ?.setAttribute("width", Math.max(0.01, markerX).toFixed(1))
   }
 }
 

@@ -746,30 +746,49 @@ body.paused .pause-overlay {
   left: 18px;
   top: 50%;
   transform: translateY(-50%);
-  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   height: 40px;
-  padding: 0;
-  border-radius: 50%;
-  background: rgba(6, 20, 11, 0.75);
-  border: 1px solid var(--mx-green-faint);
+  padding: 0 16px 0 12px;
+  border-radius: 20px;
+  background: rgba(6, 20, 11, 0.82);
+  border: 1px solid var(--mx-green);
   color: var(--mx-green);
-  font: 700 18px/1 var(--mx-mono);
+  font: 700 12px/1 var(--mx-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   cursor: pointer;
   backdrop-filter: blur(4px);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+  box-shadow: 0 0 12px rgba(52, 224, 122, 0.28);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, background 0.2s ease;
   z-index: 40;
 }
 
 .info-button .info-button-glyph {
   position: relative;
   z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 13px;
+}
+
+.info-button .info-button-label {
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
 }
 
 /* Slow radar-ping ring so the button reads as discoverable without nagging. */
 .info-button .info-button-ring {
   position: absolute;
   inset: -1px;
-  border-radius: 50%;
+  border-radius: 20px;
   border: 1px solid var(--mx-green-faint);
   animation: info-ping 3.2s ease-out infinite;
   pointer-events: none;
@@ -784,8 +803,9 @@ body.paused .pause-overlay {
 .info-button:hover,
 .info-button:focus-visible {
   color: var(--mx-bright);
-  border-color: var(--mx-green);
-  box-shadow: 0 0 16px rgba(52, 224, 122, 0.45);
+  border-color: var(--mx-bright);
+  background: rgba(10, 32, 18, 0.9);
+  box-shadow: 0 0 20px rgba(52, 224, 122, 0.55);
   outline: none;
 }
 
@@ -807,6 +827,16 @@ body.paused .pause-overlay {
    the overlay on screen permanently — this makes hidden actually hide it. */
 .info-overlay[hidden] {
   display: none;
+}
+
+/* While the dossier is open the game loop stops rendering, so the WebGPU canvas
+   is never refreshed. Left composited under the overlay's backdrop-filter, that
+   stale (un-preserved) drawing buffer flashes garbage frames. Hiding #app takes
+   the canvas out of the compositor entirely — no source, no flashes — while
+   visibility (not display) keeps its layout so the swapchain size is untouched.
+   The dimmed look is preserved: the backdrop-filter still tints the HUD behind. */
+body.info-open #app {
+  visibility: hidden;
 }
 
 .info-rain {
@@ -907,6 +937,61 @@ body.paused .pause-overlay {
   border-color: var(--mx-green);
   box-shadow: 0 0 12px rgba(52, 224, 122, 0.4);
   outline: none;
+}
+
+.info-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 28px 0;
+  border-bottom: 1px solid var(--mx-border);
+  background: linear-gradient(180deg, rgba(52, 224, 122, 0.04), transparent);
+}
+
+.info-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 9px 18px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px 7px 0 0;
+  color: var(--mx-green-dim);
+  font: 700 12px var(--mx-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.info-tab:hover,
+.info-tab:focus-visible {
+  color: var(--mx-bright);
+  outline: none;
+}
+
+.info-tab.is-active {
+  color: var(--mx-bright);
+  background: var(--mx-panel);
+  border-color: var(--mx-border);
+  border-bottom-color: var(--mx-panel);
+  box-shadow: 0 -4px 18px rgba(52, 224, 122, 0.12);
+}
+
+.info-tab-num {
+  color: var(--mx-green-dim);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.info-tab.is-active .info-tab-num {
+  color: var(--mx-green);
+}
+
+.info-tab-panel[hidden] {
+  display: none;
 }
 
 .info-body {
@@ -1362,6 +1447,12 @@ body.paused .pause-overlay {
   height: 44%;
 }
 
+/* The time-dilation diagram fills most of its height, so its viz sits in a
+   moderate band below the two-clock strip. */
+.synth-timerate-scroll .synth-viz {
+  height: 30%;
+}
+
 .synth-diagram {
   overflow: hidden;
 }
@@ -1420,6 +1511,21 @@ body.paused .pause-overlay {
   transform: scaleX(var(--charge-ease));
   transform-box: fill-box;
   transform-origin: left center;
+}
+
+.sd-meter-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: grab;
+  touch-action: none;
+}
+
+.synth-charge-scroll.cs-grabbing .sd-meter-hit {
+  cursor: grabbing;
+}
+
+.synth-charge-scroll.cs-grabbing .sd-charge-fill {
+  filter: drop-shadow(0 0 16px rgba(52, 224, 122, 0.85));
 }
 
 .sd-meter-tick,
@@ -1541,27 +1647,32 @@ body.paused .pause-overlay {
 /* Larger, readable label type for both sticky synth diagrams. The shapes are
    coordinate-fixed, so bumping only the text lets the charts read much bigger. */
 .synth-charge-diagram .dg-title,
-.synth-blast-diagram .dg-title {
+.synth-blast-diagram .dg-title,
+.synth-timerate-diagram .dg-title {
   font: 700 18px var(--mx-mono);
 }
 
 .synth-charge-diagram .dg-box-title,
-.synth-blast-diagram .dg-box-title {
+.synth-blast-diagram .dg-box-title,
+.synth-timerate-diagram .dg-box-title {
   font: 700 15.5px var(--mx-mono);
 }
 
 .synth-charge-diagram .dg-hot,
-.synth-blast-diagram .dg-hot {
+.synth-blast-diagram .dg-hot,
+.synth-timerate-diagram .dg-hot {
   font: 700 16px var(--mx-mono);
 }
 
 .synth-charge-diagram .dg-sub,
-.synth-blast-diagram .dg-sub {
+.synth-blast-diagram .dg-sub,
+.synth-timerate-diagram .dg-sub {
   font: 400 13.5px var(--mx-mono);
 }
 
 .synth-charge-diagram .dg-label,
-.synth-blast-diagram .dg-label {
+.synth-blast-diagram .dg-label,
+.synth-timerate-diagram .dg-label {
   font-size: 13px;
 }
 
@@ -1628,6 +1739,105 @@ body.paused .pause-overlay {
   stroke-width: 2;
   filter: drop-shadow(0 0 12px rgba(200, 255, 221, 0.85));
 }
+
+/* ---- Time-dilation diagram (DIAGRAM 3) ---- */
+.tr-node {
+  fill: rgba(52, 224, 122, 0.055);
+  stroke: rgba(52, 224, 122, 0.34);
+  stroke-width: 1.15;
+}
+
+.tr-scope {
+  fill: rgba(0, 8, 3, 0.52);
+  stroke: rgba(52, 224, 122, 0.13);
+  stroke-width: 1;
+}
+
+.tr-meter-shell {
+  fill: rgba(52, 224, 122, 0.08);
+  stroke: rgba(52, 224, 122, 0.28);
+}
+
+.tr-meter-fill {
+  fill: rgba(52, 224, 122, 0.4);
+  filter: drop-shadow(0 0 10px rgba(52, 224, 122, 0.5));
+}
+
+.tr-marker-line {
+  stroke: var(--mx-bright);
+  stroke-width: 1.6;
+}
+
+.tr-marker-dot {
+  fill: var(--mx-bright);
+  stroke: var(--mx-green);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 10px rgba(200, 255, 221, 0.85));
+}
+
+/* Draggable hit area over the TIME SCALE meter. Transparent but grabs pointer
+   events; touch-action none so a horizontal drag doesn't scroll the panel. */
+.tr-meter-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: grab;
+  touch-action: none;
+}
+
+.synth-timerate-scroll.tr-grabbing .tr-meter-hit {
+  cursor: grabbing;
+}
+
+.synth-timerate-scroll.tr-grabbing .tr-marker-dot {
+  fill: var(--mx-green);
+  filter: drop-shadow(0 0 16px rgba(52, 224, 122, 0.95));
+}
+
+.tr-hint {
+  fill: var(--mx-green-dim);
+  letter-spacing: 0.14em;
+}
+
+/* The waveform stretches horizontally as the rate drops — longer wavelength,
+   lower pitch — from the left edge of its own box. */
+.tr-wave {
+  fill: none;
+  stroke: var(--mx-green);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 5px rgba(52, 224, 122, 0.5));
+  transform: scaleX(var(--wave-stretch, 1));
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+/* The envelope stretches the same way — attack + tail unfold in slow motion. */
+.tr-env {
+  fill: none;
+  stroke: var(--mx-bright);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 6px rgba(200, 255, 221, 0.6));
+  transform: scaleX(var(--env-stretch, 1));
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+/* Same number of audio ticks, spaced out by 1/rate: fewer land in the fixed
+   wall-clock window as the world slows. */
+.tr-game-ticks {
+  transform: scaleX(var(--tick-stretch, 1));
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+.tr-copy-rate { opacity: var(--tr-step-rate, 1); }
+.tr-copy-pitch { opacity: var(--tr-step-pitch, 1); }
+.tr-copy-env { opacity: var(--tr-step-env, 1); }
+.tr-copy-sqrt { opacity: var(--tr-step-sqrt, 1); }
 
 /* Diagram element styles (SVG classes) */
 .dg-box {
