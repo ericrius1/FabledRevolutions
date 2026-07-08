@@ -108,6 +108,10 @@ const OPENING_NEAR_Z = 6
  * permanent kill. Set deep (~1000 m) so bodies plunge a long, visible way into
  * the void before they vanish, rather than blinking out at the floor edge. */
 const FALL_KILL_Y = -1000
+/** Below this Y a body has cleared the arena edge and is unrecoverable (nothing
+ * to catch it before FALL_KILL_Y). "Enemies left" ticks down here — the instant
+ * it drops below the floor — not way down at FALL_KILL_Y when it finally vanishes. */
+const FALL_COUNT_Y = -2
 
 const PREFIX = "fabled-revolutions.revolutions."
 const SETTINGS_SCHEMA_KEY = `${PREFIX}settings-schema`
@@ -215,6 +219,9 @@ export class RevolutionsScenario implements Scenario {
     { x: number; z: number; s: number }
   >()
   private readonly arrivals = new Map<Enemy, Arrival>()
+  /** Fallen bodies already tallied into eliminatedTotal (counted at the edge,
+   * still falling toward FALL_KILL_Y). Prevents a second tally at cull time. */
+  private readonly countedFallen = new Set<Enemy>()
   private readonly ledges: THREE.Mesh[] = []
   private readonly activePressers = new Set<Enemy>()
   private readonly velScratch = { x: 0, y: 0, z: 0 }
@@ -715,14 +722,24 @@ export class RevolutionsScenario implements Scenario {
    * Retire every agent that has dropped past the floor edge into the void.
    * These are the only real kills: removed for good (no respawn), counted
    * toward the win. Iterates back-to-front so splices don't skip entries.
+   *
+   * Counting and culling are split: a body is tallied the instant it clears the
+   * arena edge (FALL_COUNT_Y) so "enemies left" drops immediately, but it isn't
+   * disposed until it plunges to FALL_KILL_Y — so the falling body stays visible.
    */
   private cullFallenEnemies(): void {
     let fell = false
     for (let i = this.liveEnemies.length - 1; i >= 0; i--) {
       const enemy = this.liveEnemies[i]
       enemy.body.getPosition(this.velScratch)
-      if (this.velScratch.y > FALL_KILL_Y) continue
-      this.eliminatedTotal++
+      const y = this.velScratch.y
+      // Off the edge = unrecoverable. Tally once, right away.
+      if (y <= FALL_COUNT_Y && !this.countedFallen.has(enemy)) {
+        this.countedFallen.add(enemy)
+        this.eliminatedTotal++
+      }
+      if (y > FALL_KILL_Y) continue
+      this.countedFallen.delete(enemy)
       this.liveEnemies.splice(i, 1)
       this.ctx.scene.remove(enemy.group)
       enemy.dispose()
@@ -757,7 +774,7 @@ export class RevolutionsScenario implements Scenario {
       new THREE.Vector2(slot.x, slot.z),
       {
         scene: this.ctx.scene,
-        seekSpeed: 4.4 + Math.random() * 0.6,
+        seekSpeed: 5.1 + Math.random() * 0.9,
         hp: 1,
         separation: 1.1,
         standoff: 4.5,
@@ -786,13 +803,13 @@ export class RevolutionsScenario implements Scenario {
 
   /** Showcase helper: place a one-hit presser at exact coordinates. */
   spawnNear(x: number, z: number): void {
-    this.spawnPresser(x, z, 5.2, 1.1, "full")
+    this.spawnPresser(x, z, 6.0, 1.1, "full")
   }
 
   private spawnPresser(
     x?: number,
     z?: number,
-    speed = 5.4,
+    speed = 6.2,
     standoff?: number,
     visualDetail: "full" | "crowd" = "crowd",
     arrivalDelay = 0
@@ -810,7 +827,7 @@ export class RevolutionsScenario implements Scenario {
       new THREE.Vector2(spawnX, spawnZ),
       {
         scene: this.ctx.scene,
-        seekSpeed: speed + Math.random() * 0.4,
+        seekSpeed: speed + Math.random() * 0.7,
         hp: 1,
         separation: 1.4,
         standoff: standoff ?? this.nextPresserStandoff(),
@@ -1080,6 +1097,7 @@ export class RevolutionsScenario implements Scenario {
       this.ctx.physics.removeBody(enemy.body)
     }
     this.liveEnemies.length = 0
+    this.countedFallen.clear()
     this.arrivals.clear()
     this.activePressers.clear()
     this.impactCooldown.clear()

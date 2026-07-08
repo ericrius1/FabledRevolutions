@@ -90,34 +90,6 @@ const DEBRIS_FADE_TIME = 0.45;
 const DEBRIS_MAX_AIR_TIME = 6;
 const TWO_PI = Math.PI * 2;
 
-/** Blast openings punched through each facade so launched agents can be knocked
- * clean off the map SIDEWAYS through a gap, instead of only by sweeping the whole
- * crowd to the far corridor end. Sizes are in cube cells (≈ multiples of
- * cubeSize wide). Both rows on a side share the same z-spans so each opening
- * reads clean through to the skyline. */
-const OPENING_WIDTH_MIN = 2;
-const OPENING_WIDTH_RAND = 2; // opening spans 2–3 cells
-/** Solid wall cells between openings (a minimum run plus a random extra). */
-const OPENING_SOLID_MIN = 6;
-const OPENING_SOLID_RAND = 6;
-/** Keep the near/far ends walled within this many cells so the street still
- * frames and the ranks still cap out. */
-const OPENING_EDGE_MARGIN = 3;
-
-/** Plan the blast openings for one facade: wide breaks separated by solid runs
- * of wall, as [startCell, endCell) intervals along Z (ascending, disjoint). */
-function planOpenings(cellsZ: number): [number, number][] {
-  const gaps: [number, number][] = [];
-  // First stretch stays solid so the near end frames the street.
-  let iz = OPENING_EDGE_MARGIN + OPENING_SOLID_MIN + Math.floor(Math.random() * OPENING_SOLID_RAND);
-  while (iz < cellsZ - OPENING_EDGE_MARGIN) {
-    const w = OPENING_WIDTH_MIN + Math.floor(Math.random() * OPENING_WIDTH_RAND);
-    gaps.push([iz, Math.min(cellsZ, iz + w)]);
-    iz += w + OPENING_SOLID_MIN + Math.floor(Math.random() * OPENING_SOLID_RAND);
-  }
-  return gaps;
-}
-
 const tmpMat = new THREE.Matrix4();
 const tmpImpactOrigin = new THREE.Vector3();
 const tmpColor = new THREE.Color();
@@ -394,26 +366,16 @@ export class CubeBuildings {
       depthBase: number,
       heightScale: number,
       collide: boolean,
-      gaps: readonly [number, number][],
     ): void => {
       let iz = 0;
       while (iz < cellsZ) {
-        // Inside a blast opening: no tower, no collider — jump to its far edge.
-        const inGap = gaps.find((g) => iz >= g[0] && iz < g[1]);
-        if (inGap) {
-          iz = inGap[1];
-          continue;
-        }
         const width = 2 + Math.floor(Math.random() * 2);
         // Wide spread around the average, plus rare tall spikes, for a jagged,
         // varied skyline rather than a uniform wall.
         let towerH = Math.round(cfg.avgFloors * heightScale * (0.6 + Math.random() * 0.85));
         if (Math.random() < 0.12) towerH = Math.round(towerH * (1.3 + Math.random() * 0.6));
         towerH = Math.max(2, towerH);
-        let zEnd = Math.min(cellsZ, iz + width);
-        // Never let a tower straddle the next opening — stop the run at its edge.
-        const nextGap = gaps.find((g) => g[0] >= iz);
-        if (nextGap && zEnd > nextGap[0]) zEnd = nextGap[0];
+        const zEnd = Math.min(cellsZ, iz + width);
         let towerMaxH = 0;
         for (let z = iz; z < zEnd; z++) {
           const colH = Math.max(2, towerH - Math.floor(Math.random() * 3));
@@ -451,14 +413,11 @@ export class CubeBuildings {
     };
 
     for (const side of [-1, 1]) {
-      // Each facade gets its own opening pattern (nice left/right asymmetry),
-      // shared between its front and back rows so the gap reads clear through.
-      const gaps = planOpenings(cellsZ);
       // Front row lines the corridor (collides, carries the climb roofs); a
       // taller back row sits behind a one-cell alley for depth. The back row is
       // purely decorative — same static instanced mesh, no physics.
-      buildRow(side, 0, 1, true, gaps);
-      buildRow(side, 3, 1.45, false, gaps);
+      buildRow(side, 0, 1, true);
+      buildRow(side, 3, 1.45, false);
     }
 
     const geometry = new THREE.BoxGeometry(s, s, s);
