@@ -216,18 +216,35 @@ export class InfoModal {
     const gap = 2
     const bw = (cssW - gap * (bars - 1)) / bars
     const endAt = performance.now() + seconds * 1000 + 320
+    // The charge drone is quiet, so its raw spectrum barely lifts off the
+    // floor. Normalize its bars per-frame to the loudest bar so the peak always
+    // reaches the top of the band; the LFO throb still reads in the shorter
+    // bars. The blast is already hot — left raw.
+    const autoGain = kind === "charge"
 
     const draw = (): void => {
       analyser.getByteFrequencyData(freq)
       analyser.getByteTimeDomainData(wave)
       ctx.clearRect(0, 0, cssW, cssH)
 
-      let energy = 0
+      // First pass: sample the bars and find this frame's peak.
+      const vals = new Array<number>(bars)
+      let frameMax = 0
       for (let i = 0; i < bars; i++) {
         // Perceptual-ish spread: more bars to the low end where the body sits.
         const frac = i / (bars - 1)
         const bin = Math.min(usable, Math.floor(Math.pow(frac, 1.5) * usable))
         const v = freq[bin] / 255
+        vals[i] = v
+        if (v > frameMax) frameMax = v
+      }
+      // Per-frame normalize (floored so near-silence doesn't blow tiny noise
+      // up to full height).
+      const norm = autoGain ? 1 / Math.max(frameMax, 0.07) : 1
+
+      let energy = 0
+      for (let i = 0; i < bars; i++) {
+        const v = Math.min(1, vals[i] * norm)
         energy += v
         const h = Math.max(1, v * (cssH - 16))
         const x = i * (bw + gap)
@@ -536,7 +553,7 @@ export class InfoModal {
             <svg class="info-diagram synth-diagram synth-stage-diagram synth-charge-diagram" viewBox="0 0 1080 600" width="1080" height="600" preserveAspectRatio="xMidYMin meet" role="img"
                  aria-label="Sticky animated WebAudio charge synthesis diagram showing oscillators, filter, gain modulation, and output routing">
               ${defs}
-              <clipPath id="synth-charge-clip"><rect x="24" y="18" width="1032" height="550" rx="8"/></clipPath>
+              <clipPath id="synth-charge-clip"><rect x="24" y="18" width="1032" height="568" rx="8"/></clipPath>
               <g clip-path="url(#synth-charge-clip)">
               <text x="34" y="42" class="dg-title">LIVE CHARGE HUM PATCH</text>
               <text x="34" y="64" class="dg-sub">continuous voice, updated every frame</text>

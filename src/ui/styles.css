@@ -1355,6 +1355,13 @@ body.paused .pause-overlay {
   opacity: 1;
 }
 
+/* The charge patch leaves a big blank band under its diagram — let its viz
+   grow up to fill it (bars are normalized to this full height). The blast
+   timeline packs lower, so its viz stays the shorter default. */
+.synth-charge-scroll .synth-viz {
+  height: 44%;
+}
+
 .synth-diagram {
   overflow: hidden;
 }
