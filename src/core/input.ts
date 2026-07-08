@@ -8,6 +8,7 @@ export interface InputActivity {
   move: boolean;
   look: boolean;
   attack: boolean;
+  boost: boolean;
 }
 
 const STICK_DEADZONE = 0.25;
@@ -36,7 +37,7 @@ export class Input {
   private pointerNdc = new THREE.Vector2(0, 0);
   private attackQueued = false;
   private releaseQueued = false;
-  /** Rising-edge toggles for mode hotkeys (C / P / I / Shift / Esc). */
+  /** Rising-edge toggles for mode hotkeys (C / P / I / / / Esc). */
   private cameraToggleQueued = false;
   private pauseToggleQueued = false;
   private immersiveToggleQueued = false;
@@ -88,9 +89,7 @@ export class Input {
       if (e.code === "KeyC") this.cameraToggleQueued = true;
       if (e.code === "KeyP") this.pauseToggleQueued = true;
       if (e.code === "KeyI") this.immersiveToggleQueued = true;
-      if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
-        this.panelToggleQueued = true;
-      }
+      if (e.code === "Slash") this.panelToggleQueued = true;
       if (e.code === "Escape") this.infoModalToggleQueued = true;
     }
     // Rising edge only: the OS repeats keydown while Space is held, but a jump
@@ -341,11 +340,11 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Ctrl / LB / RB / LT) — triples ground move speed. */
+  /** True while sprint is held (Shift / LB / RB / LT) — triples ground move speed. */
   get sprintHeld(): boolean {
     return (
-      this.keys.has("ControlLeft") ||
-      this.keys.has("ControlRight") ||
+      this.keys.has("ShiftLeft") ||
+      this.keys.has("ShiftRight") ||
       this.sprintPadHeld
     );
   }
@@ -376,6 +375,7 @@ export class Input {
       move: moving,
       look: this.lookTimer > 0,
       attack: this.attackFlash > 0,
+      boost: this.sprintHeld,
     };
   }
 

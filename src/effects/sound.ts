@@ -58,6 +58,8 @@ export class SoundEffect extends BaseEffect {
   /** Brick-wall-ish limiter on the master out so the loud thunder boom can
    *  hit hard without clipping the whole mix into ugly digital fuzz. */
   private limiter: DynamicsCompressorNode | null = null;
+  /** Read-only tap off the master bus for the dossier's live audio viz. */
+  private analyser: AnalyserNode | null = null;
 
   // Charge drone voice (lives while charging; everything tracks the charge
   // level). Deliberately LOW and menacing — think Neo realizing he's the One,
@@ -72,6 +74,10 @@ export class SoundEffect extends BaseEffect {
   private humLfoDepth: GainNode | null = null;
   private humGain: GainNode | null = null;
   private humFilter: BiquadFilterNode | null = null;
+
+  // Dossier preview: a self-contained charge drone (its own voice, not the live
+  // `hum*` nodes) so the info panel can demo the sound without a real charge.
+  private previewHum: { oscs: OscillatorNode[]; gain: GainNode } | null = null;
 
   // Voice rate limiting: a mass-kill spin fires dozens of hit events in a few
   // frames; building an oscillator graph per event stalls both the audio
@@ -171,6 +177,12 @@ export class SoundEffect extends BaseEffect {
     return this.audio?.state ?? "none";
   }
 
+  /** Master-bus analyser for the dossier's live audio viz (lazily created). */
+  getAnalyser(): AnalyserNode | null {
+    this.ensureAudio();
+    return this.analyser;
+  }
+
   /** User SFX volume, 0..1 (default 0.5). */
   getVolume(): number {
     return this.volume;
@@ -202,6 +214,11 @@ export class SoundEffect extends BaseEffect {
       this.limiter.attack.value = 0.002;
       this.limiter.release.value = 0.18;
       this.master.connect(this.limiter).connect(this.audio.destination);
+      // Parallel read-only tap for the dossier viz (no output — just samples).
+      this.analyser = this.audio.createAnalyser();
+      this.analyser.fftSize = 1024;
+      this.analyser.smoothingTimeConstant = 0.78;
+      this.master.connect(this.analyser);
       this.noiseBuffer = this.makeNoise(this.audio);
 
       // Wet bus: send -> convolver (generated 2.6 s hall IR) -> master, plus a
@@ -737,6 +754,104 @@ export class SoundEffect extends BaseEffect {
     this.sendVerb(crashGain, 1.0);
     crash.start(t);
     crash.stop(t + 0.5 / r);
+  }
+
+  // ---- Dossier previews ----
+  // These play regardless of the Sound toggle: they're an explicit user action
+  // in the info panel, and the click itself is the gesture that unlocks audio.
+
+  /**
+   * One-shot demo of the continuous charge drone for the info dossier. The live
+   * voice (`startHum`) rides the player's charge level frame by frame; here we
+   * fake that arc — rest → full overcharge over ~1.7 s, then release — on a
+   * throwaway voice so the diagram's "building hum" has something to hear.
+   * Returns the total length in seconds (0 if audio is unavailable).
+   */
+  previewChargeHum(): number {
+    this.ensureAudio();
+    if (!this.audio || !this.master) return 0;
+    this.stopPreviewSound();
+    const t = this.now();
+    const rise = 1.7; // rest -> full overcharge
+    const rel = 0.35; // fade-out
+    const end = t + rise + rel;
+
+    // Gain: quick fade-in, climb with the charge, then release. The same 55→110
+    // "gets heavier, not higher" arc and 200→900 Hz filter open as the live hum.
+    const gain = this.audio.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.25);
+    gain.gain.linearRampToValueAtTime(0.42, t + rise);
+    gain.gain.setTargetAtTime(0.0001, t + rise, rel * 0.4);
+
+    const filter = this.audio.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 2.5;
+    filter.frequency.setValueAtTime(200, t);
+    filter.frequency.linearRampToValueAtTime(900, t + rise);
+
+    const oscA = this.audio.createOscillator();
+    oscA.type = "sawtooth";
+    oscA.frequency.setValueAtTime(55, t);
+    oscA.frequency.linearRampToValueAtTime(110, t + rise);
+    const oscB = this.audio.createOscillator();
+    oscB.type = "sawtooth";
+    oscB.frequency.setValueAtTime(55, t);
+    oscB.frequency.linearRampToValueAtTime(110, t + rise);
+    oscB.detune.setValueAtTime(7, t);
+    oscB.detune.linearRampToValueAtTime(25, t + rise);
+    const sub = this.audio.createOscillator();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(27.5, t);
+    sub.frequency.linearRampToValueAtTime(55, t + rise);
+
+    const lfo = this.audio.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.setValueAtTime(1.8, t);
+    lfo.frequency.linearRampToValueAtTime(5.2, t + rise);
+    const lfoDepth = this.audio.createGain();
+    lfoDepth.gain.setValueAtTime(0.04, t);
+    lfoDepth.gain.linearRampToValueAtTime(0.16, t + rise);
+    lfo.connect(lfoDepth).connect(gain.gain);
+
+    oscA.connect(filter);
+    oscB.connect(filter);
+    sub.connect(gain);
+    filter.connect(gain).connect(this.master);
+    this.sendVerb(gain, 0.35);
+
+    const oscs = [oscA, oscB, sub, lfo];
+    for (const o of oscs) o.start(t);
+    for (const o of oscs) o.stop(end + 0.05);
+    this.previewHum = { oscs, gain };
+    oscA.addEventListener("ended", () => {
+      if (this.previewHum?.oscs[0] === oscA) this.previewHum = null;
+    });
+    return rise + rel;
+  }
+
+  /** One-shot mega blast for the info dossier. Returns its length in seconds. */
+  previewMegaBlast(): number {
+    this.ensureAudio();
+    if (!this.audio) return 0;
+    this.megaBlast();
+    return 1.8;
+  }
+
+  /** Kill any in-flight preview drone (e.g. when the dossier closes). */
+  stopPreviewSound(): void {
+    if (!this.previewHum || !this.audio) return;
+    const t = this.now();
+    this.previewHum.gain.gain.cancelScheduledValues(t);
+    this.previewHum.gain.gain.setTargetAtTime(0.0001, t, 0.03);
+    for (const o of this.previewHum.oscs) {
+      try {
+        o.stop(t + 0.12);
+      } catch {
+        // already stopped
+      }
+    }
+    this.previewHum = null;
   }
 
   /**

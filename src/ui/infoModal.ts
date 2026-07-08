@@ -1,8 +1,9 @@
 /**
  * "System dossier" info modal: a floating ⓘ button on the left edge opens a
  * near-fullscreen overlay explaining the project — the juice philosophy, the
- * effect stack, the event-bus architecture, the two-clock trick, the box3d
- * WASM physics pipeline, threading, and the WebGPU/TSL render path.
+ * effect stack, sound synthesis, the event-bus architecture, the two-clock
+ * trick, the box3d WASM physics pipeline, threading, and the WebGPU/TSL render
+ * path.
  *
  * Opening pauses the GameClock (via the callbacks the caller wires up) and
  * dims the live frame behind a grayscale/green backdrop, Matrix style. The
@@ -14,6 +15,14 @@ export interface InfoModalHooks {
   onOpen(): void
   /** Called when the modal closes — restore whatever onOpen suspended. */
   onClose(): void
+  /** Play the game's charge-hum voice once for the diagram. Returns seconds. */
+  playChargeSound?(): number
+  /** Play the game's mega-blast voice once for the diagram. Returns seconds. */
+  playBlastSound?(): number
+  /** Stop any in-flight preview sound (called on close). */
+  stopSounds?(): void
+  /** Master-bus analyser for drawing the live audio viz. */
+  getAnalyser?(): AnalyserNode | null
 }
 
 const RAIN_GLYPHS =
@@ -28,6 +37,11 @@ export class InfoModal {
   private rainRaf = 0
   private rainDrops: number[] = []
   private rainLast = 0
+  private synthDiagramRaf = 0
+  /** rAF handle for the live audio visualization under a diagram. */
+  private vizRaf = 0
+  /** Per play-button timers that clear the transient "playing" state. */
+  private previewTimers = new Map<HTMLButtonElement, number>()
 
   constructor(private readonly hooks: InfoModalHooks) {
     this.button = document.createElement("button")
@@ -58,6 +72,7 @@ export class InfoModal {
     // Reset scroll and move focus into the dialog for keyboard users.
     this.root.querySelector<HTMLElement>(".info-body")?.scrollTo({ top: 0 })
     this.root.querySelector<HTMLButtonElement>(".info-close")?.focus()
+    this.queueSynthDiagramUpdate()
   }
 
   close(): void {
@@ -66,6 +81,15 @@ export class InfoModal {
     this.root.hidden = true
     document.body.classList.remove("info-open")
     this.stopRain()
+    this.stopViz()
+    cancelAnimationFrame(this.synthDiagramRaf)
+    this.synthDiagramRaf = 0
+    this.hooks.stopSounds?.()
+    for (const [btn, id] of this.previewTimers) {
+      window.clearTimeout(id)
+      btn.classList.remove("is-playing")
+    }
+    this.previewTimers.clear()
     this.hooks.onClose()
     this.button.focus()
   }
@@ -100,6 +124,7 @@ export class InfoModal {
         ${this.sectionThreads()}
         ${this.sectionRender()}
         ${this.sectionDesign()}
+        ${this.sectionSoundSynthesis()}
         <footer class="info-footer">
           <span>Fabled Revolutions · MIT · three.js + box3d.js</span>
           <span class="info-footer-blink">▮</span>
@@ -114,6 +139,144 @@ export class InfoModal {
     modal
       .querySelector(".info-close")
       ?.addEventListener("click", () => this.close())
+    modal
+      .querySelector(".info-body")
+      ?.addEventListener("scroll", () => this.queueSynthDiagramUpdate(), {
+        passive: true
+      })
+    window.addEventListener("resize", () => this.queueSynthDiagramUpdate())
+
+    // Diagram "play" buttons: fire the real game voice once, then reset the
+    // button's playing state after the sound's own length.
+    modal
+      .querySelectorAll<HTMLButtonElement>(".synth-preview-btn")
+      .forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation()
+          const kind = btn.dataset.preview === "blast" ? "blast" : "charge"
+          const seconds =
+            kind === "blast"
+              ? (this.hooks.playBlastSound?.() ?? 0)
+              : (this.hooks.playChargeSound?.() ?? 0)
+          this.flashPreviewButton(btn, seconds)
+          if (seconds > 0) this.startViz(kind, seconds)
+        })
+      })
+  }
+
+  /** Mark a play button as sounding for `seconds`, then clear it. */
+  private flashPreviewButton(btn: HTMLButtonElement, seconds: number): void {
+    const prev = this.previewTimers.get(btn)
+    if (prev) window.clearTimeout(prev)
+    if (seconds <= 0) {
+      btn.classList.remove("is-playing")
+      this.previewTimers.delete(btn)
+      return
+    }
+    btn.classList.add("is-playing")
+    const id = window.setTimeout(() => {
+      btn.classList.remove("is-playing")
+      this.previewTimers.delete(btn)
+    }, seconds * 1000)
+    this.previewTimers.set(btn, id)
+  }
+
+  // ------------------------------------------------------- live audio viz
+
+  /**
+   * Draw the real WebAudio output in the blank space under a diagram while its
+   * sound plays: a low-band spectrum (harmonics filling in / the blast's
+   * broadband burst) with an oscilloscope trace over the top. Reads the master
+   * analyser tap the game already mixes into — it IS the sound, not a fake.
+   */
+  private startViz(kind: "charge" | "blast", seconds: number): void {
+    this.stopViz()
+    const analyser = this.hooks.getAnalyser?.()
+    const wrap = this.root.querySelector<HTMLElement>(
+      kind === "blast" ? ".synth-blast-scroll" : ".synth-charge-scroll"
+    )
+    const canvas = wrap?.querySelector<HTMLCanvasElement>(".synth-viz")
+    const ctx = canvas?.getContext("2d")
+    if (!analyser || !canvas || !ctx) return
+
+    const dpr = Math.min(window.devicePixelRatio, 2)
+    const cssW = canvas.clientWidth || 600
+    const cssH = canvas.clientHeight || 200
+    canvas.width = Math.floor(cssW * dpr)
+    canvas.height = Math.floor(cssH * dpr)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    canvas.classList.add("is-live")
+
+    const bins = analyser.frequencyBinCount
+    const freq = new Uint8Array(bins)
+    const wave = new Uint8Array(analyser.fftSize)
+    // These voices live low; only the bottom ~40% of bins carry the action.
+    const usable = Math.floor(bins * 0.42)
+    const bars = 56
+    const gap = 2
+    const bw = (cssW - gap * (bars - 1)) / bars
+    const endAt = performance.now() + seconds * 1000 + 320
+
+    const draw = (): void => {
+      analyser.getByteFrequencyData(freq)
+      analyser.getByteTimeDomainData(wave)
+      ctx.clearRect(0, 0, cssW, cssH)
+
+      let energy = 0
+      for (let i = 0; i < bars; i++) {
+        // Perceptual-ish spread: more bars to the low end where the body sits.
+        const frac = i / (bars - 1)
+        const bin = Math.min(usable, Math.floor(Math.pow(frac, 1.5) * usable))
+        const v = freq[bin] / 255
+        energy += v
+        const h = Math.max(1, v * (cssH - 16))
+        const x = i * (bw + gap)
+        const y = cssH - h
+        const grad = ctx.createLinearGradient(0, cssH, 0, y)
+        grad.addColorStop(0, "rgba(31,174,82,0.22)")
+        grad.addColorStop(1, `rgba(120,255,190,${0.34 + v * 0.55})`)
+        ctx.fillStyle = grad
+        ctx.fillRect(x, y, bw, h)
+      }
+      energy /= bars
+
+      ctx.beginPath()
+      const step = wave.length / cssW
+      for (let x = 0; x < cssW; x++) {
+        const s = wave[Math.floor(x * step)] / 128 - 1
+        const y = cssH * 0.5 + s * cssH * 0.32
+        if (x === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      ctx.strokeStyle = `rgba(200,255,221,${0.3 + energy * 0.55})`
+      ctx.lineWidth = 1.5
+      ctx.shadowColor = "rgba(52,224,122,0.85)"
+      ctx.shadowBlur = 8
+      ctx.stroke()
+      ctx.shadowBlur = 0
+
+      ctx.font = "700 9px ui-monospace, monospace"
+      ctx.fillStyle = "rgba(52,224,122,0.65)"
+      ctx.fillText("◈ LIVE OUTPUT", 2, 10)
+
+      if (performance.now() < endAt && this.openState) {
+        this.vizRaf = requestAnimationFrame(draw)
+      } else {
+        this.stopViz()
+      }
+    }
+    this.vizRaf = requestAnimationFrame(draw)
+  }
+
+  private stopViz(): void {
+    cancelAnimationFrame(this.vizRaf)
+    this.vizRaf = 0
+    this.root
+      .querySelectorAll<HTMLCanvasElement>(".synth-viz.is-live")
+      .forEach((c) => {
+        c.classList.remove("is-live")
+        c.getContext("2d")?.clearRect(0, 0, c.width, c.height)
+      })
   }
 
   private sectionJuice(): string {
@@ -198,7 +361,7 @@ export class InfoModal {
       [
         "Sound",
         "Audio",
-        "Procedural WebAudio SFX — swing whoosh, hit thock, kill boom, hurt blip."
+        "Procedural WebAudio SFX — swing whoosh, charge hum, hit thock, mega blast."
       ]
     ]
     const body = rows
@@ -225,6 +388,364 @@ export class InfoModal {
         </table>
       </div>
     </section>`
+  }
+
+  private sectionSoundSynthesis(): string {
+    return `
+    <section class="info-section info-section-wide info-bonus-section">
+      <div class="info-bonus-box">
+        <span class="info-title-tag">// BONUS SOUND LAB</span>
+        <h2><span class="info-num">BONUS</span> Procedural sound synthesis</h2>
+        <p>
+          This part is extra for fun: the combat lesson above is about feel and
+          architecture; the audio layer is a tiny synthesis lab hiding inside the
+          same event system. There are no WAV or MP3 files in the effect stack.
+          <code>SoundEffect</code> builds short WebAudio graphs at the moment of
+          impact.
+        </p>
+      </div>
+      <p>
+        Most voices here are made from four reusable pieces: an oscillator for
+        tonal body, a noise burst for air or crackle, filters for color, and
+        gain envelopes for motion. The sound is <em>performed</em>, not played
+        back. Slow motion lowers playback rates and stretches envelopes; charge
+        level keeps pushing oscillator pitch, detune, filter cutoff, and LFO
+        throb while the button is held.
+      </p>
+      <p>
+        The important WebAudio trick is that nearly every number is scheduled on
+        an <code>AudioParam</code>. A pitch glide is not a loop that constantly
+        rewrites frequency; it is a tiny automation curve. A punchy hit is not
+        just a loud oscillator; it is a gain envelope that rises almost
+        instantly and then falls on purpose. This project leans on those curves
+        so the audio reacts to the same combat events that drive particles,
+        camera shake, and hit stop.
+      </p>
+      <dl class="synth-concept-list">
+        <div>
+          <dt>Oscillators</dt>
+          <dd>Saws make bright charge energy. Sines carry low weight without fizz.</dd>
+        </div>
+        <div>
+          <dt>Filters</dt>
+          <dd>The lowpass opens during charge, revealing harmonics as power builds.</dd>
+        </div>
+        <div>
+          <dt>Envelopes</dt>
+          <dd>Short ramps define attack, body, release, and whether a sound feels heavy.</dd>
+        </div>
+        <div>
+          <dt>Wet bus</dt>
+          <dd>Reverb and echo are shared, so separate blast layers land in one room.</dd>
+        </div>
+      </dl>
+      ${this.soundChargeStage()}
+      <p>
+        The charge patch is a continuous voice. While the player holds the
+        attack, the graph stays alive and receives updated control values every
+        frame. The saw pair is deliberately a little wrong: detune spreads the
+        voices apart so the hum beats and wobbles. The sine sub sits underneath
+        at half frequency, making the charge feel large without needing to be
+        harsh or loud.
+      </p>
+      <p>
+        Notice how the filter does as much emotional work as the pitch. If only
+        the oscillator frequency rose, the sound would feel like a siren. Opening
+        the lowpass makes the same voice reveal more harmonics over time, which
+        reads as stored energy. The LFO is another small illusion: it modulates
+        gain, so the charge breathes instead of becoming a flat drone.
+      </p>
+      ${this.soundBlastStage()}
+      <p>
+        The blast is a one-shot event, but it is not one sound. It is a stack of
+        envelopes that begin together: a falling sine sub for mass, a detuned
+        chord for bite, a highpassed noise flash for impact air, and a room tail
+        that keeps the hit alive after the dry layers are gone. The curves are
+        intentionally different lengths so the ear can read a beginning, a body,
+        and an aftermath.
+      </p>
+      <p>
+        This is also why procedural effects are useful in a game-feel prototype.
+        The same code can scale a hit, a kill, a charged release, or a slow-motion
+        moment without exporting a new file for every case. Instead of choosing
+        one recording, the game chooses a patch and pushes live values through it.
+      </p>
+      <div class="info-link-grid" aria-label="Further learning links">
+        <a href="https://learningsynths.ableton.com/" target="_blank" rel="noopener">
+          <span>Learning Synths</span>
+          <small>Ableton's interactive browser synth: oscillators, filters, envelopes, LFOs, and playable patches.</small>
+        </a>
+        <a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API/Advanced_techniques" target="_blank" rel="noopener">
+          <span>Web Audio techniques</span>
+          <small>MDN's code-level walkthrough of envelopes, LFO modulation, noise buffers, filters, and sequencing.</small>
+        </a>
+      </div>
+    </section>`
+  }
+
+  private soundChargeStage(): string {
+    const { defs, head } = diagDefs()
+    return `
+      <div class="synth-sticky-scroll synth-charge-scroll" data-synth-diagram="charge-stage">
+        <div class="synth-sticky-stage">
+          <div class="synth-stage-copy">
+            <span class="info-title-tag">DIAGRAM 1 / CHARGE PATCH</span>
+            <h3 class="synth-stage-title">Building a hum while power rises</h3>
+            <button class="synth-preview-btn" type="button" data-preview="charge"
+                    aria-label="Play the charge hum sound effect">
+              <span class="synth-preview-icon" aria-hidden="true"></span>
+              <span class="synth-preview-label">Play charge hum</span>
+            </button>
+            <div class="synth-stage-steps">
+              <p class="synth-stage-line cs-copy-osc">
+                <strong>Oscillator rack.</strong>
+                Two saws create the bright electrical edge. A sine one octave
+                lower adds weight without cluttering the top end.
+              </p>
+              <p class="synth-stage-line cs-copy-filter">
+                <strong>Lowpass motion.</strong>
+                The cutoff opens during charge, so harmonics appear as the
+                sword fills.
+              </p>
+              <p class="synth-stage-line cs-copy-amp">
+                <strong>Gain modulation.</strong>
+                A sine LFO pulses the level. Faster charge means faster throb.
+              </p>
+              <p class="synth-stage-line cs-copy-space">
+                <strong>Output path.</strong>
+                Dry signal goes through a limiter while a quieter copy feeds the
+                shared wet bus.
+              </p>
+            </div>
+            <dl class="synth-readouts">
+              <div>
+                <dt>charge</dt>
+                <dd><span class="sd-charge-readout">0.00</span></dd>
+              </div>
+              <div>
+                <dt>cutoff</dt>
+                <dd><span class="sd-cutoff-readout">180</span> Hz</dd>
+              </div>
+              <div>
+                <dt>throb</dt>
+                <dd><span class="sd-lfo-readout">1.8</span> Hz</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="info-scroll synth-scroll-diagram">
+            <svg class="info-diagram synth-diagram synth-stage-diagram synth-charge-diagram" viewBox="0 0 1080 600" width="1080" height="600" preserveAspectRatio="xMidYMin meet" role="img"
+                 aria-label="Sticky animated WebAudio charge synthesis diagram showing oscillators, filter, gain modulation, and output routing">
+              ${defs}
+              <clipPath id="synth-charge-clip"><rect x="24" y="18" width="1032" height="550" rx="8"/></clipPath>
+              <g clip-path="url(#synth-charge-clip)">
+              <text x="34" y="42" class="dg-title">LIVE CHARGE HUM PATCH</text>
+              <text x="34" y="64" class="dg-sub">continuous voice, updated every frame</text>
+
+              <g class="cs-meter">
+                <rect x="734" y="30" width="286" height="18" rx="4" class="sd-meter-shell"/>
+                <rect x="734" y="30" width="286" height="18" rx="4" class="sd-charge-fill"/>
+                <line x1="877" y1="26" x2="877" y2="54" class="sd-meter-tick"/>
+                <text x="734" y="70" class="dg-sub">0</text>
+                <text x="866" y="70" class="dg-sub">1 full</text>
+                <text x="994" y="70" class="dg-sub">2 mega</text>
+                <text x="880" y="96" class="dg-hot" text-anchor="middle">level <tspan class="sd-charge-readout">0.00</tspan></text>
+              </g>
+
+              <g class="cs-step cs-step-osc">
+                <rect x="48" y="112" width="266" height="242" rx="8" class="cs-node-box"/>
+                <text x="70" y="144" class="dg-title">OSCILLATOR RACK</text>
+                <text x="70" y="166" class="dg-sub">tone body before filtering</text>
+                <rect x="70" y="194" width="214" height="38" rx="5" class="cs-scope"/>
+                <path d="M86 220 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave"/>
+                <text x="70" y="258" class="dg-hot">saw A</text>
+                <text x="132" y="258" class="dg-sub">55 -> 110 Hz</text>
+                <rect x="70" y="276" width="214" height="38" rx="5" class="cs-scope"/>
+                <path d="M86 302 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22 l10 -22 v22" class="sd-wave sd-wave-alt cs-detune-wave"/>
+                <text x="70" y="340" class="dg-hot">saw B</text>
+                <text x="132" y="340" class="dg-sub">detune <tspan class="sd-detune-readout">3</tspan> cents</text>
+                <rect x="70" y="372" width="214" height="48" rx="5" class="cs-scope"/>
+                <path d="M88 401 c16 -23 32 -23 48 0 s32 23 48 0 s32 -23 48 0" class="sd-wave sd-sub-wave"/>
+                <text x="70" y="448" class="dg-hot">sine sub</text>
+                <text x="152" y="448" class="dg-sub">half frequency</text>
+              </g>
+
+              ${diagArrow(head, 314, 238, 374, 238)}
+
+              <g class="cs-step cs-step-filter">
+                <rect x="374" y="130" width="262" height="262" rx="8" class="cs-node-box cs-node-hot"/>
+                <text x="402" y="164" class="dg-title">LOWPASS FILTER</text>
+                <text x="402" y="186" class="dg-sub">cutoff opens as charge rises</text>
+                <rect x="402" y="218" width="204" height="104" rx="5" class="cs-scope"/>
+                <line x1="420" y1="292" x2="588" y2="292" class="dg-line"/>
+                <line x1="420" y1="252" x2="588" y2="252" class="dg-line"/>
+                <path d="M420 292 C458 290 486 276 508 252 S548 222 588 220" class="sd-filter-curve" pathLength="1"/>
+                <circle cx="430" cy="290" r="7" class="sd-filter-dot"/>
+                <text x="402" y="352" class="dg-hot">cutoff <tspan class="sd-cutoff-readout">180</tspan> Hz</text>
+                <text x="402" y="374" class="dg-sub">darker start, brighter finish</text>
+              </g>
+
+              ${diagArrow(head, 636, 238, 700, 238)}
+
+              <g class="cs-step cs-step-amp">
+                <rect x="700" y="124" width="300" height="210" rx="8" class="cs-node-box"/>
+                <text x="728" y="158" class="dg-title">GAIN + LFO</text>
+                <text x="728" y="180" class="dg-sub">envelope plus animated throb</text>
+                <rect x="728" y="210" width="232" height="74" rx="5" class="cs-scope"/>
+                <path d="M748 260 C778 216 808 216 838 260 S896 304 940 238" class="sd-lfo-wave" pathLength="1"/>
+                <text x="728" y="314" class="dg-hot">LFO <tspan class="sd-lfo-readout">1.8</tspan> Hz</text>
+                <text x="828" y="314" class="dg-sub">modulates gain</text>
+              </g>
+
+              <g class="cs-step cs-step-space">
+                <rect x="704" y="406" width="128" height="66" rx="6" class="dg-box"/>
+                <text x="768" y="435" class="dg-box-title" text-anchor="middle">wet bus</text>
+                <text x="768" y="455" class="dg-sub" text-anchor="middle">reverb + echo</text>
+                <rect x="872" y="406" width="128" height="66" rx="6" class="dg-box"/>
+                <text x="936" y="435" class="dg-box-title" text-anchor="middle">speakers</text>
+                <text x="936" y="455" class="dg-sub" text-anchor="middle">limited output</text>
+                ${diagArrowDashed(head, 850, 334, 778, 406)}
+                ${diagArrow(head, 850, 334, 936, 406)}
+                ${diagArrowDashed(head, 832, 438, 872, 438)}
+              </g>
+
+              <circle r="6" cx="344" cy="238" class="sd-flow-pulse sd-flow-a"/>
+              <circle r="5" cx="670" cy="238" class="sd-flow-pulse sd-flow-b"/>
+              <circle r="5" cx="850" cy="334" class="sd-flow-pulse sd-flow-c"/>
+
+              <g class="cs-step cs-step-auto">
+                <text x="48" y="516" class="dg-title">CONTROL AUTOMATION</text>
+                <text x="48" y="538" class="dg-sub">AudioParam ramps written while charging</text>
+                <text x="48" y="570" class="dg-hot">pitch</text>
+                <text x="168" y="570" class="dg-hot">cutoff</text>
+                <text x="300" y="570" class="dg-hot">gain throb</text>
+                <rect x="430" y="500" width="570" height="28" rx="5" class="cs-scope"/>
+                <rect x="430" y="542" width="570" height="28" rx="5" class="cs-scope"/>
+                <path d="M448 520 C548 518 646 512 736 507 S892 505 982 506" class="cs-auto-line cs-auto-pitch" pathLength="1"/>
+                <path d="M448 562 C540 562 610 554 676 540 S812 520 982 518" class="cs-auto-line cs-auto-cutoff" pathLength="1"/>
+                <path d="M448 553 C486 540 524 540 562 553 S638 566 676 553 S752 540 790 553 S866 566 904 553 S960 540 982 548" class="cs-auto-line cs-auto-lfo" pathLength="1"/>
+              </g>
+              </g>
+            </svg>
+            <canvas class="synth-viz" data-viz="charge" aria-hidden="true"></canvas>
+          </div>
+        </div>
+      </div>`
+  }
+
+  private soundBlastStage(): string {
+    const { defs } = diagDefs()
+    return `
+      <div class="synth-sticky-scroll synth-blast-scroll" data-synth-diagram="blast-stage">
+        <div class="synth-sticky-stage">
+          <div class="synth-stage-copy">
+            <span class="info-title-tag">DIAGRAM 2 / BLAST RELEASE</span>
+            <h3 class="synth-stage-title">Layering one event into a hit</h3>
+            <button class="synth-preview-btn" type="button" data-preview="blast"
+                    aria-label="Play the mega blast sound effect">
+              <span class="synth-preview-icon" aria-hidden="true"></span>
+              <span class="synth-preview-label">Play mega blast</span>
+            </button>
+            <div class="synth-stage-steps">
+              <p class="synth-stage-line bd-copy-sub">
+                <strong>Sub drop.</strong>
+                A sine falls quickly from weapon-sized tension to chest-sized
+                weight.
+              </p>
+              <p class="synth-stage-line bd-copy-chord">
+                <strong>Power chord.</strong>
+                Detuned saws give the blast a pitched, aggressive center.
+              </p>
+              <p class="synth-stage-line bd-copy-noise">
+                <strong>Noise flash.</strong>
+                Filtered noise adds the bright transient that makes the event
+                feel physical.
+              </p>
+              <p class="synth-stage-line bd-copy-tail">
+                <strong>Room tail.</strong>
+                Reverb and delay stay after the dry layers fade, selling size.
+              </p>
+            </div>
+            <dl class="synth-readouts">
+              <div>
+                <dt>time</dt>
+                <dd><span class="bd-time-readout">0.00</span>s</dd>
+              </div>
+              <div>
+                <dt>dry</dt>
+                <dd><span class="bd-dry-readout">100</span>%</dd>
+              </div>
+              <div>
+                <dt>wet</dt>
+                <dd><span class="bd-wet-readout">24</span>%</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="info-scroll synth-scroll-diagram">
+            <svg class="info-diagram synth-diagram synth-stage-diagram synth-blast-diagram" viewBox="0 0 1080 700" width="1080" height="700" preserveAspectRatio="xMidYMin meet" role="img"
+                 aria-label="Sticky animated mega blast timeline showing sub, chord, noise, and reverb envelopes in separate lanes">
+              ${defs}
+              <clipPath id="synth-blast-chart-clip"><rect x="320" y="86" width="708" height="554" rx="8"/></clipPath>
+
+              <text x="34" y="42" class="dg-title">MEGA BLAST LAYER TIMELINE</text>
+              <text x="34" y="66" class="dg-sub">one combat event, four scheduled envelopes</text>
+              <line x1="296" y1="86" x2="296" y2="640" class="bd-divider"/>
+              <text x="340" y="66" class="dg-hot">scroll the pinned panel: each curve reveals as the release opens</text>
+
+              <g class="bd-labels">
+                <text x="48" y="128" class="dg-hot">SUB DROP</text>
+                <text x="48" y="151" class="dg-sub">sine oscillator</text>
+                <text x="48" y="174" class="dg-sub">110 Hz -> 24 Hz</text>
+
+                <text x="48" y="250" class="dg-hot">SAW CHORD</text>
+                <text x="48" y="273" class="dg-sub">A/E/A stack</text>
+                <text x="48" y="296" class="dg-sub">detuned body</text>
+
+                <text x="48" y="372" class="dg-hot">NOISE CRASH</text>
+                <text x="48" y="395" class="dg-sub">highpassed burst</text>
+                <text x="48" y="418" class="dg-sub">fast decay</text>
+
+                <text x="48" y="494" class="dg-hot">ROOM TAIL</text>
+                <text x="48" y="517" class="dg-sub">convolver + delay</text>
+                <text x="48" y="540" class="dg-sub">long aftermath</text>
+              </g>
+
+              <g clip-path="url(#synth-blast-chart-clip)">
+                <rect x="340" y="100" width="660" height="88" rx="7" class="sd-lane"/>
+                <rect x="340" y="218" width="660" height="88" rx="7" class="sd-lane"/>
+                <rect x="340" y="336" width="660" height="88" rx="7" class="sd-lane"/>
+                <rect x="340" y="454" width="660" height="88" rx="7" class="sd-lane sd-tail-lane"/>
+
+                ${Array.from({ length: 6 }, (_, i) => `<line x1="${340 + i * 132}" y1="86" x2="${340 + i * 132}" y2="640" class="bd-grid-line"/>`).join("")}
+                <path d="M358 127 C448 129 540 141 632 159 S808 171 982 167" class="sd-layer-line sd-layer-sub" pathLength="1"/>
+                <path d="M358 283 C440 247 560 247 686 267 S852 301 982 299" class="sd-layer-line sd-layer-chord" pathLength="1"/>
+                <path d="M358 407 C390 359 448 359 492 399 S610 443 706 419" class="sd-layer-line sd-layer-noise" pathLength="1"/>
+                <path d="M358 531 C476 507 642 513 790 531 S910 559 982 557" class="sd-layer-line sd-layer-verb" pathLength="1"/>
+
+                <line x1="340" y1="640" x2="1000" y2="640" class="dg-line"/>
+                ${Array.from({ length: 6 }, (_, i) => `<line x1="${340 + i * 132}" y1="632" x2="${340 + i * 132}" y2="648" class="dg-tick"/>`).join("")}
+              </g>
+
+              <text x="335" y="668" class="dg-sub">0.0s</text>
+              <text x="940" y="668" class="dg-sub">1.8s tail</text>
+
+              <g class="bd-playhead" transform="translate(340 0)">
+                <rect x="-44" y="74" width="88" height="28" rx="5" class="sd-playhead-tag"/>
+                <line x1="0" y1="108" x2="0" y2="640" class="sd-playhead-line"/>
+                <circle cx="0" cy="640" r="8" class="sd-playhead-dot"/>
+                <text x="0" y="94" class="dg-hot" text-anchor="middle">t=<tspan class="bd-time-readout">0.00</tspan>s</text>
+              </g>
+
+              <g class="bd-mixer">
+                <rect x="748" y="18" width="130" height="38" rx="5" class="dg-box"/>
+                <text x="813" y="44" class="dg-box-title" text-anchor="middle">dry bus <tspan class="bd-dry-readout">100</tspan>%</text>
+                <rect x="894" y="18" width="130" height="38" rx="5" class="dg-box"/>
+                <text x="959" y="44" class="dg-box-title" text-anchor="middle">wet bus <tspan class="bd-wet-readout">24</tspan>%</text>
+              </g>
+            </svg>
+            <canvas class="synth-viz" data-viz="blast" aria-hidden="true"></canvas>
+          </div>
+        </div>
+      </div>`
   }
 
   private sectionArchitecture(): string {
@@ -559,6 +1080,112 @@ export class InfoModal {
     cancelAnimationFrame(this.rainRaf)
     this.rainRaf = 0
   }
+
+  // -------------------------------------------------------- scroll diagrams
+
+  private queueSynthDiagramUpdate(): void {
+    if (!this.openState || this.synthDiagramRaf) return
+    this.synthDiagramRaf = requestAnimationFrame(() => {
+      this.synthDiagramRaf = 0
+      this.updateSynthDiagrams()
+    })
+  }
+
+  private updateSynthDiagrams(): void {
+    const body = this.root.querySelector<HTMLElement>(".info-body")
+    if (!body) return
+    const bodyRect = body.getBoundingClientRect()
+    const diagrams = body.querySelectorAll<HTMLElement>("[data-synth-diagram]")
+    for (const diagram of diagrams) {
+      const rect = diagram.getBoundingClientRect()
+      const stage = diagram.querySelector<HTMLElement>(".synth-sticky-stage")
+      const stageHeight = stage?.getBoundingClientRect().height ?? bodyRect.height
+      const travel = Math.max(1, rect.height - stageHeight)
+      const progress = clamp01((bodyRect.top + 12 - rect.top) / travel)
+      const eased = progress * progress * (3 - 2 * progress)
+      diagram.style.setProperty("--p", progress.toFixed(3))
+      diagram.style.setProperty("--ease", eased.toFixed(3))
+      if (diagram.dataset.synthDiagram === "charge-stage") {
+        this.updateChargeStage(diagram, progress)
+      } else if (diagram.dataset.synthDiagram === "blast-stage") {
+        this.updateBlastStage(diagram, progress)
+      }
+    }
+  }
+
+  private updateChargeStage(diagram: HTMLElement, progress: number): void {
+    const chargeProgress = clamp01(progress)
+    const chargeEase = smooth01(chargeProgress)
+    const chargeLevel = Math.min(2, chargeEase * 2.05)
+    const cutoffHz = Math.round(180 + chargeEase * 980)
+    const detuneCents = Math.round(3 + chargeEase * 25)
+    const lfoHz = 1.8 + chargeLevel * 1.7
+    diagram.style.setProperty("--charge", chargeProgress.toFixed(3))
+    diagram.style.setProperty("--charge-ease", chargeEase.toFixed(3))
+    diagram.style.setProperty("--tone-opacity", fmt(mix(0.38, 1, clamp01(chargeProgress * 3.2))))
+    diagram.style.setProperty("--filter-opacity", fmt(mix(0.2, 1, clamp01((chargeProgress - 0.08) * 4.5))))
+    diagram.style.setProperty("--gain-opacity", fmt(mix(0.2, 1, clamp01((chargeProgress - 0.28) * 4.5))))
+    diagram.style.setProperty("--output-opacity", fmt(mix(0.18, 1, clamp01((chargeProgress - 0.48) * 4.2))))
+    diagram.style.setProperty("--stage-osc-opacity", fmt(mix(0.5, 1, clamp01(chargeProgress * 2.6))))
+    diagram.style.setProperty("--stage-filter-opacity", fmt(mix(0.24, 1, clamp01((chargeProgress - 0.16) * 4))))
+    diagram.style.setProperty("--stage-amp-opacity", fmt(mix(0.18, 1, clamp01((chargeProgress - 0.34) * 4))))
+    diagram.style.setProperty("--stage-space-opacity", fmt(mix(0.16, 1, clamp01((chargeProgress - 0.56) * 3.6))))
+    diagram.style.setProperty("--wave-alt-opacity", fmt(mix(0.45, 1, chargeEase)))
+    diagram.style.setProperty("--sub-wave-opacity", fmt(mix(0.4, 1, chargeEase)))
+    diagram.style.setProperty("--detune-y", `${fmt(chargeEase * 8)}px`)
+    diagram.style.setProperty("--charge-dash", fmt(1 - chargeEase))
+    diagram.style.setProperty("--filter-dot-x", `${fmt(chargeEase * 150)}px`)
+    diagram.style.setProperty("--filter-dot-y", `${fmt(chargeEase * -70)}px`)
+    diagram.style.setProperty("--lfo-scale", fmt(0.55 + chargeEase * 0.7))
+    diagram.style.setProperty("--flow-opacity", fmt(clamp01((chargeProgress - 0.18) * 3.8)))
+    diagram.style.setProperty("--flow-a-x", `${fmt(chargeEase * 48)}px`)
+    diagram.style.setProperty("--flow-b-x", `${fmt(chargeEase * 48)}px`)
+    diagram.style.setProperty("--flow-c-x", `${fmt(chargeEase * 50)}px`)
+    diagram
+      .querySelectorAll(".sd-charge-readout")
+      .forEach((el) => el.replaceChildren(chargeLevel.toFixed(2)))
+    diagram
+      .querySelectorAll(".sd-cutoff-readout")
+      .forEach((el) => el.replaceChildren(String(cutoffHz)))
+    diagram
+      .querySelectorAll(".sd-detune-readout")
+      .forEach((el) => el.replaceChildren(String(detuneCents)))
+    diagram
+      .querySelectorAll(".sd-lfo-readout")
+      .forEach((el) => el.replaceChildren(lfoHz.toFixed(1)))
+  }
+
+  private updateBlastStage(diagram: HTMLElement, progress: number): void {
+    const blastProgress = clamp01(progress)
+    const blastEase = smooth01(blastProgress)
+    const seconds = blastProgress * 1.8
+    const dryPercent = Math.max(0, Math.round(100 - blastEase * 72))
+    const wetPercent = Math.round(24 + blastEase * 76)
+    diagram.style.setProperty("--blast", blastProgress.toFixed(3))
+    diagram.style.setProperty("--blast-ease", blastEase.toFixed(3))
+    diagram.style.setProperty("--stage-sub-opacity", fmt(mix(0.45, 1, clamp01(blastProgress * 4))))
+    diagram.style.setProperty("--stage-chord-opacity", fmt(mix(0.25, 1, clamp01((blastProgress - 0.08) * 4))))
+    diagram.style.setProperty("--stage-noise-opacity", fmt(mix(0.2, 1, clamp01((blastProgress - 0.18) * 4))))
+    diagram.style.setProperty("--stage-tail-opacity", fmt(mix(0.2, 1, clamp01((blastProgress - 0.36) * 3.2))))
+    diagram.style.setProperty("--blast-dash", fmt(1 - blastProgress))
+    diagram.style.setProperty("--sub-dash", fmt(clamp01(1 - blastProgress * 1.25)))
+    diagram.style.setProperty("--chord-dash", fmt(clamp01(1 - (blastProgress - 0.1) * 1.5)))
+    diagram.style.setProperty("--noise-dash", fmt(clamp01(1 - (blastProgress - 0.04) * 3.2)))
+    diagram.style.setProperty("--verb-dash", fmt(clamp01(1 - (blastProgress - 0.16) * 1.25)))
+    diagram.style.setProperty("--blast-glow", `${fmt(blastEase * 10)}px`)
+    diagram
+      .querySelectorAll(".bd-time-readout")
+      .forEach((el) => el.replaceChildren(seconds.toFixed(2)))
+    diagram
+      .querySelectorAll(".bd-dry-readout")
+      .forEach((el) => el.replaceChildren(String(dryPercent)))
+    diagram
+      .querySelectorAll(".bd-wet-readout")
+      .forEach((el) => el.replaceChildren(String(wetPercent)))
+    diagram
+      .querySelector<SVGElement>(".bd-playhead")
+      ?.setAttribute("transform", `translate(${340 + blastProgress * 660} 0)`)
+  }
 }
 
 // ------------------------------------------------------------ svg helpers
@@ -613,4 +1240,20 @@ function diagArrowDashed(
   y2: number
 ): string {
   return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="dg-arrow dg-dashed" marker-end="url(#${head})"/>`
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function smooth01(value: number): number {
+  return value * value * (3 - 2 * value)
+}
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t
+}
+
+function fmt(value: number): string {
+  return value.toFixed(3)
 }

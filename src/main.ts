@@ -245,7 +245,11 @@ async function boot(): Promise<void> {
       clock.paused = pausedBeforeInfo
       document.body.classList.toggle("paused", clock.paused)
       if (!cameraMode) input.setGameplayEnabled(true)
-    }
+    },
+    playChargeSound: () => soundFx?.previewChargeHum() ?? 0,
+    playBlastSound: () => soundFx?.previewMegaBlast() ?? 0,
+    stopSounds: () => soundFx?.stopPreviewSound(),
+    getAnalyser: () => soundFx?.getAnalyser() ?? null
   })
   document.body.appendChild(infoModal.button)
   document.body.appendChild(infoModal.root)
@@ -341,6 +345,19 @@ async function boot(): Promise<void> {
     if (input.consumePanelToggle()) {
       panelHidden = !panelHidden
       document.body.classList.toggle("panel-hidden", panelHidden)
+    }
+
+    // While the dossier is open the game is paused AND fully hidden behind the
+    // near-opaque overlay. Skip all sim, effect, camera, HUD, sync, and render
+    // work below: none of it is visible, and — critically — presenting a fresh
+    // WebGPU frame under the overlay's `backdrop-filter` forces the browser to
+    // re-blur a still-animating scene every frame (camera/effects tick on
+    // unscaled dt), which flickers and starves the modal's own scroll + rain of
+    // main-thread time. A frozen last frame blurs once and stays crisp. Hotkey
+    // queues were already drained above, so nothing fires on close.
+    if (infoModal.isOpen) {
+      schedule(loop)
+      return
     }
 
     legend.update(input.activeSource, input.activity(), cameraMode)

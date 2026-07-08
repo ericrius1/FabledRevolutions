@@ -526,6 +526,7 @@ function drawHud(c: CanvasRenderingContext2D, w: number, hgt: number, h: RecordH
     ["MOVE", "WASD"],
     ["LOOK", "MOUSE"],
     ["ATTACK", "CLICK · HOLD TO CHARGE"],
+    ["BOOST", "SHIFT"],
   ];
   let ly = hgt - 18 - (rows.length - 1) * 20;
   for (const [k, v] of rows) {

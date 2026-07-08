@@ -1,6 +1,6 @@
 import type { InputActivity, InputSource } from "../core/input";
 
-type Action = "move" | "look" | "attack";
+type Action = "move" | "look" | "attack" | "boost";
 
 interface RowLabels {
   title: string;
@@ -13,22 +13,24 @@ const LABELS: Record<InputSource, Record<Action, RowLabels>> = {
     move: { title: "MOVE", value: "WASD" },
     look: { title: "LOOK", value: "MOUSE" },
     attack: { title: "ATTACK", value: "CLICK · HOLD TO CHARGE" },
+    boost: { title: "BOOST", value: "SHIFT" },
   },
   gamepad: {
     move: { title: "MOVE", value: "L STICK" },
     look: { title: "AIM", value: "R STICK" },
     attack: { title: "ATTACK", value: "RT · HOLD TO CHARGE" },
+    boost: { title: "BOOST", value: "LB · RB · LT" },
   },
 };
 
-const ACTIONS: Action[] = ["move", "look", "attack"];
+const ACTIONS: Action[] = ["move", "look", "attack", "boost"];
 
 const HOTKEY_ROWS: Record<InputSource, { title: string; value: string }[]> = {
   kbm: [
     { title: "CAMERA", value: "C · ORBIT · DOLLY · PAN" },
     { title: "INFO", value: "ESC" },
     { title: "IMMERSIVE", value: "I" },
-    { title: "PANEL", value: "SHIFT" },
+    { title: "PANEL", value: "/" },
   ],
   gamepad: [
     { title: "INFO", value: "START" },
