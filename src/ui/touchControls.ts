@@ -1,14 +1,14 @@
 import type { Input } from "../core/input";
 
 /**
- * Twin-stick mobile pad: left stick moves, right stick aims, and the action
- * cluster handles attack (hold to charge), jump, and boost. Only mounts when
- * the device looks touch-primary so desktop stays keyboard/mouse clean.
+ * Mobile controls: drag anywhere on the map to move (dynamic stick under the
+ * finger), right stick to aim, and the action cluster for attack / jump / boost.
+ * Only mounts when the device looks touch-primary.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
   private readonly input: Input;
-  private readonly moveStick: Stick;
+  private readonly mapMove: MapDrag;
   private readonly aimStick: Stick;
   private visible = false;
 
@@ -18,9 +18,10 @@ export class TouchControls {
     this.root.className = "touch-pad";
     this.root.setAttribute("aria-hidden", "true");
 
-    const left = document.createElement("div");
-    left.className = "touch-zone touch-zone-left";
-    this.moveStick = new Stick(left, "MOVE", (x, y) => {
+    // Full-screen drag layer — finger anywhere on the playfield steers move.
+    const map = document.createElement("div");
+    map.className = "touch-map";
+    this.mapMove = new MapDrag(map, (x, y) => {
       this.input.setTouchMove(x, y);
     });
 
@@ -44,7 +45,7 @@ export class TouchControls {
       this.input.setTouchAim(x, y);
     });
 
-    this.root.append(left, right);
+    this.root.append(map, right);
 
     // Eat all pointer traffic so the canvas underneath never sees it as an attack.
     this.root.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -62,7 +63,7 @@ export class TouchControls {
     document.body.classList.toggle("touch-controls", show);
     this.input.setTouchEnabled(show);
     if (!show) {
-      this.moveStick.reset();
+      this.mapMove.reset();
       this.aimStick.reset();
       this.input.clearTouch();
     }
@@ -70,7 +71,7 @@ export class TouchControls {
 
   dispose(): void {
     window.removeEventListener("resize", this.syncVisibility);
-    this.moveStick.dispose();
+    this.mapMove.dispose();
     this.aimStick.dispose();
     this.input.setTouchEnabled(false);
     this.input.clearTouch();
@@ -157,6 +158,116 @@ function bindPress(
     btn.classList.remove("is-active");
     onUp();
   });
+}
+
+/**
+ * Full-map drag-to-move: press anywhere, drag to steer. A translucent stick
+ * blooms under the finger so the direction reads clearly.
+ */
+class MapDrag {
+  private readonly base: HTMLDivElement;
+  private readonly knob: HTMLDivElement;
+  private readonly onChange: (x: number, y: number) => void;
+  private pointerId: number | null = null;
+  private originX = 0;
+  private originY = 0;
+  /** Pixels of drag that map to full tilt — generous so a thumb flick feels good. */
+  private readonly radius: number;
+
+  constructor(
+    private readonly zone: HTMLElement,
+    onChange: (x: number, y: number) => void,
+    radius = 64,
+  ) {
+    this.onChange = onChange;
+    this.radius = radius;
+
+    this.base = document.createElement("div");
+    this.base.className = "touch-stick-base touch-map-stick";
+    this.knob = document.createElement("div");
+    this.knob.className = "touch-stick-knob";
+    const tag = document.createElement("span");
+    tag.className = "touch-stick-tag";
+    tag.textContent = "DRAG TO MOVE";
+    this.base.append(this.knob, tag);
+    this.zone.appendChild(this.base);
+
+    this.zone.addEventListener("pointerdown", this.onPointerDown);
+    this.zone.addEventListener("pointermove", this.onPointerMove);
+    this.zone.addEventListener("pointerup", this.onPointerUp);
+    this.zone.addEventListener("pointercancel", this.onPointerUp);
+  }
+
+  private onPointerDown = (e: PointerEvent): void => {
+    // Right-side aim / buttons sit above this layer and stopPropagation —
+    // but guard anyway in case events bubble from chrome.
+    if ((e.target as HTMLElement).closest(".touch-zone-right, .touch-btn")) return;
+    if (this.pointerId !== null) return;
+    e.preventDefault();
+    this.pointerId = e.pointerId;
+    this.originX = e.clientX;
+    this.originY = e.clientY;
+    this.placeBase(e.clientX, e.clientY);
+    this.base.classList.add("is-active");
+    this.setKnob(0, 0);
+    this.onChange(0, 0);
+    try {
+      this.zone.setPointerCapture(e.pointerId);
+    } catch {
+      // optional
+    }
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (e.pointerId !== this.pointerId) return;
+    e.preventDefault();
+    const dx = e.clientX - this.originX;
+    const dy = e.clientY - this.originY;
+    const len = Math.hypot(dx, dy);
+    const scale = len > this.radius ? this.radius / len : 1;
+    const kx = dx * scale;
+    const ky = dy * scale;
+    this.setKnob(kx, ky);
+    // Soft deadzone so a resting thumb doesn't creep.
+    const nx = kx / this.radius;
+    const ny = -ky / this.radius;
+    const mag = Math.hypot(nx, ny);
+    if (mag < 0.12) {
+      this.onChange(0, 0);
+      return;
+    }
+    this.onChange(nx, ny);
+  };
+
+  private onPointerUp = (e: PointerEvent): void => {
+    if (e.pointerId !== this.pointerId) return;
+    e.preventDefault();
+    this.reset();
+  };
+
+  private placeBase(clientX: number, clientY: number): void {
+    const r = this.zone.getBoundingClientRect();
+    this.base.style.left = `${clientX - r.left}px`;
+    this.base.style.top = `${clientY - r.top}px`;
+  }
+
+  private setKnob(x: number, y: number): void {
+    this.knob.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  reset(): void {
+    this.pointerId = null;
+    this.base.classList.remove("is-active");
+    this.setKnob(0, 0);
+    this.onChange(0, 0);
+  }
+
+  dispose(): void {
+    this.zone.removeEventListener("pointerdown", this.onPointerDown);
+    this.zone.removeEventListener("pointermove", this.onPointerMove);
+    this.zone.removeEventListener("pointerup", this.onPointerUp);
+    this.zone.removeEventListener("pointercancel", this.onPointerUp);
+  }
 }
 
 /** Floating virtual stick: drag within a zone, spring back on release. */

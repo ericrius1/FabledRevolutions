@@ -1104,6 +1104,10 @@ body.info-open #app {
   background: linear-gradient(180deg, rgba(52, 224, 122, 0.07), transparent);
 }
 
+.info-header[hidden] {
+  display: none !important;
+}
+
 .info-title-tag {
   font-size: 11px;
   letter-spacing: 0.3em;
@@ -2144,11 +2148,69 @@ body.info-open #app {
   display: none;
 }
 
-@media (max-width: 760px) {
+/* Compact dossier (phones / tablets): no title header — tabs are the top. */
+.info-overlay.is-compact .info-header {
+  display: none !important;
+}
+
+.info-overlay.is-compact .info-close-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  margin-bottom: -1px;
+  padding: 0;
+  width: 40px;
+  height: auto;
+  border-radius: 7px 7px 0 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.info-overlay.is-compact .info-overlay,
+.info-overlay.is-compact {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.info-overlay.is-compact .info-modal {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+.info-overlay.is-compact .info-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  gap: 4px;
+  padding: 10px 12px 0;
+  padding-top: max(10px, env(safe-area-inset-top));
+  align-items: stretch;
+}
+
+.info-overlay.is-compact .info-tab {
+  flex: 1;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
   .info-overlay {
     padding: 0;
     align-items: stretch;
     justify-content: stretch;
+  }
+
+  .info-overlay .info-header {
+    display: none !important;
   }
 
   .info-modal {
@@ -2158,11 +2220,6 @@ body.info-open #app {
     border-radius: 0;
     border-left: 0;
     border-right: 0;
-  }
-
-  /* Title block eats the phone viewport — drop it; tabs + close stay. */
-  .info-header {
-    display: none;
   }
 
   .info-tabs {
@@ -2374,6 +2431,19 @@ body.info-open #app {
     height: 18px;
     font-size: 12px;
   }
+
+  /* Effect panel eats too much of a phone viewport — hide it entirely. */
+  .panel {
+    display: none;
+  }
+
+  .social-links {
+    right: max(18px, env(safe-area-inset-right));
+  }
+
+  .legend .row.panel-hint {
+    display: none;
+  }
 }
 
 /* ---- Twin-stick touch pad (phones / tablets) ---- */
@@ -2392,25 +2462,42 @@ body.info-open #app {
   display: block;
 }
 
+/* Full-screen drag layer — finger anywhere on the map steers movement. */
+.touch-map {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 0;
+}
+
+.touch-map-stick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.touch-map-stick.is-active {
+  opacity: 1;
+}
+
 .touch-zone {
   position: absolute;
   bottom: 0;
-  width: 46%;
-  height: 42%;
-  max-height: 280px;
   pointer-events: auto;
   touch-action: none;
-}
-
-.touch-zone-left {
-  left: 0;
-  padding-left: max(8px, env(safe-area-inset-left));
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 1;
 }
 
 .touch-zone-right {
   right: 0;
-  width: 54%;
+  width: 48%;
+  max-width: 280px;
+  height: 46%;
+  max-height: 300px;
   padding-right: max(8px, env(safe-area-inset-right));
   padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
@@ -2427,8 +2514,8 @@ body.info-open #app {
 }
 
 .touch-zone-right .touch-stick {
-  left: 32%;
-  top: 62%;
+  left: 28%;
+  top: 55%;
 }
 
 .touch-stick.is-active {
@@ -2604,14 +2691,11 @@ body.panel-hidden.touch-controls .social-links {
 }
 
 @media (max-width: 760px) and (orientation: landscape) {
-  .touch-zone {
-    height: 70%;
-    max-height: none;
-    width: 38%;
-  }
-
   .touch-zone-right {
-    width: 42%;
+    width: 36%;
+    max-width: 240px;
+    height: 78%;
+    max-height: none;
   }
 
   .touch-btn {

@@ -69,6 +69,26 @@ export class InfoModal {
     this.root.className = "info-overlay"
     this.root.hidden = true
     this.build()
+    this.syncCompact()
+    window.addEventListener("resize", this.syncCompact)
+  }
+
+  /** Phones / tablets: drop the title header so the dossier starts at the tabs. */
+  private syncCompact = (): void => {
+    const compact =
+      window.matchMedia("(max-width: 900px)").matches ||
+      (window.matchMedia("(hover: none)").matches &&
+        window.matchMedia("(pointer: coarse)").matches) ||
+      document.body.classList.contains("touch-controls") ||
+      (navigator.maxTouchPoints > 0 && window.innerWidth <= 1024)
+    this.root.classList.toggle("is-compact", compact)
+    const header = this.root.querySelector<HTMLElement>(".info-header")
+    if (header) {
+      header.hidden = compact
+      // Author `.info-header { display: flex }` beats the UA [hidden] rule —
+      // force it off so the dossier always starts at the tabs on phones.
+      header.style.display = compact ? "none" : ""
+    }
   }
 
   get isOpen(): boolean {
@@ -78,6 +98,7 @@ export class InfoModal {
   open(tab: string = "visual"): void {
     if (this.openState) return
     this.openState = true
+    this.syncCompact()
     this.root.hidden = false
     document.body.classList.add("info-open")
     this.hooks.onOpen()

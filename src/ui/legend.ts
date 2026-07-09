@@ -22,7 +22,7 @@ const LABELS: Record<InputSource, Record<Action, RowLabels>> = {
     boost: { title: "BOOST", value: "LB · RB · LT" },
   },
   touch: {
-    move: { title: "MOVE", value: "LEFT STICK" },
+    move: { title: "MOVE", value: "DRAG MAP" },
     look: { title: "AIM", value: "RIGHT STICK" },
     attack: { title: "ATTACK", value: "HOLD TO CHARGE" },
     boost: { title: "BOOST", value: "BOOST BTN" },
