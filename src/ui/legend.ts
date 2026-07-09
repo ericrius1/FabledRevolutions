@@ -23,7 +23,7 @@ const LABELS: Record<InputSource, Record<Action, RowLabels>> = {
   },
   touch: {
     move: { title: "MOVE", value: "DRAG MAP" },
-    look: { title: "AIM", value: "RIGHT STICK" },
+    look: { title: "AIM", value: "FACES MOVE" },
     attack: { title: "ATTACK", value: "HOLD TO CHARGE" },
     boost: { title: "BOOST", value: "BOOST BTN" },
   },

@@ -2446,7 +2446,7 @@ body.info-open #app {
   }
 }
 
-/* ---- Twin-stick touch pad (phones / tablets) ---- */
+/* ---- Touch pad (phones / tablets): drag-to-move + action buttons ---- */
 .touch-pad {
   display: none;
   position: fixed;
@@ -2481,44 +2481,6 @@ body.info-open #app {
 }
 
 .touch-map-stick.is-active {
-  opacity: 1;
-}
-
-.touch-zone {
-  position: absolute;
-  bottom: 0;
-  pointer-events: auto;
-  touch-action: none;
-  z-index: 1;
-}
-
-.touch-zone-right {
-  right: 0;
-  width: 48%;
-  max-width: 280px;
-  height: 46%;
-  max-height: 300px;
-  padding-right: max(8px, env(safe-area-inset-right));
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
-}
-
-.touch-stick {
-  position: absolute;
-  left: 28%;
-  top: 58%;
-  width: 0;
-  height: 0;
-  transform: translate(-50%, -50%);
-  opacity: 0.55;
-  transition: opacity 0.15s ease;
-}
-
-.touch-zone-right .touch-stick {
-  left: 28%;
-  top: 55%;
-}
-
-.touch-stick.is-active {
   opacity: 1;
 }
 
@@ -2654,7 +2616,7 @@ body.info-open #app {
   color: #fff;
 }
 
-/* Clear the bottom corners for the sticks; tuck chrome out of the way. */
+/* Clear space for the action cluster; tuck chrome out of the way. */
 body.touch-controls .legend,
 body.touch-controls .sfx-volume,
 body.touch-controls .panel {
@@ -2691,13 +2653,6 @@ body.panel-hidden.touch-controls .social-links {
 }
 
 @media (max-width: 760px) and (orientation: landscape) {
-  .touch-zone-right {
-    width: 36%;
-    max-width: 240px;
-    height: 78%;
-    max-height: none;
-  }
-
   .touch-btn {
     width: 52px;
     height: 52px;

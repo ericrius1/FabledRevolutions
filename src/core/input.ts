@@ -74,8 +74,6 @@ export class Input {
   private touchEnabled = false;
   private touchMoveX = 0;
   private touchMoveY = 0;
-  private touchAimX = 0;
-  private touchAimY = 0;
   private touchAttackDown = false;
   private touchBoostDown = false;
   private touchJumpDown = false;
@@ -104,15 +102,6 @@ export class Input {
     this.touchMoveX = x;
     this.touchMoveY = y;
     if (x !== 0 || y !== 0) this.source = "touch";
-  }
-
-  setTouchAim(x: number, y: number): void {
-    this.touchAimX = x;
-    this.touchAimY = y;
-    if (x !== 0 || y !== 0) {
-      this.source = "touch";
-      this.lookTimer = LOOK_DECAY;
-    }
   }
 
   setTouchAttack(down: boolean): void {
@@ -152,7 +141,6 @@ export class Input {
     if (this.touchAttackDown) this.releaseQueued = true;
     if (this.touchJumpDown) this.jumpReleaseQueued = true;
     this.touchMoveX = this.touchMoveY = 0;
-    this.touchAimX = this.touchAimY = 0;
     this.touchAttackDown = false;
     this.touchBoostDown = false;
     this.touchJumpDown = false;
@@ -182,8 +170,8 @@ export class Input {
   };
 
   private onPointerMove = (e: PointerEvent): void => {
-    // Touch pad owns look/move on phones — don't let canvas finger-drags flip
-    // the active source back to kbm and drop the virtual sticks.
+    // Touch pad owns move on phones — don't let canvas finger-drags flip the
+    // active source back to kbm.
     if (this.touchEnabled && e.pointerType === "touch") return;
     const rect = this.domElement.getBoundingClientRect();
     this.pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -196,7 +184,7 @@ export class Input {
     if (e.button !== 0) return;
     if (!this.gameplayEnabled) return;
     // On touch devices the virtual pad owns attack — a bare canvas tap would
-    // fire swings under the sticks and fight the twin-stick layout.
+    // fire swings under the drag layer / action buttons.
     if (this.touchEnabled && e.pointerType === "touch") return;
     try {
       this.domElement.setPointerCapture(e.pointerId);
@@ -320,15 +308,12 @@ export class Input {
   }
 
   /**
-   * Right-stick / touch-aim as a camera-space vector (x right, y forward), or
-   * null when centered / not the active source. When null, callers should fall
-   * back to cursor aim via {@link aimGroundPoint}.
+   * Gamepad right-stick as a camera-space vector (x right, y forward), or null
+   * when centered / not the active source. Touch has no aim stick — facing
+   * follows movement. When null, callers should fall back to cursor aim via
+   * {@link pointerRadial}.
    */
   aimStick(out: THREE.Vector2): THREE.Vector2 | null {
-    if (this.source === "touch" && (this.touchAimX !== 0 || this.touchAimY !== 0)) {
-      out.set(this.touchAimX, this.touchAimY);
-      return out;
-    }
     if (this.source !== "gamepad" || (this.rx === 0 && this.ry === 0)) return null;
     out.set(this.rx, -this.ry);
     return out;

@@ -2,14 +2,15 @@ import type { Input } from "../core/input";
 
 /**
  * Mobile controls: drag anywhere on the map to move (dynamic stick under the
- * finger), right stick to aim, and the action cluster for attack / jump / boost.
- * Only mounts when the device looks touch-primary.
+ * finger) plus the action cluster for attack / jump / boost. Aim follows
+ * movement facing — no separate aim stick. Only mounts when the device looks
+ * touch-primary.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
   private readonly input: Input;
   private readonly mapMove: MapDrag;
-  private readonly aimStick: Stick;
+  private readonly bodyObserver: MutationObserver;
   private visible = false;
 
   constructor(input: Input) {
@@ -25,9 +26,6 @@ export class TouchControls {
       this.input.setTouchMove(x, y);
     });
 
-    const right = document.createElement("div");
-    right.className = "touch-zone touch-zone-right";
-
     const actions = document.createElement("div");
     actions.className = "touch-actions";
 
@@ -40,19 +38,32 @@ export class TouchControls {
     bindHold(boost, (down) => this.input.setTouchBoost(down));
 
     actions.append(boost, jump, attack);
-    right.appendChild(actions);
-    this.aimStick = new Stick(right, "AIM", (x, y) => {
-      this.input.setTouchAim(x, y);
-    });
-
-    this.root.append(map, right);
+    this.root.append(map, actions);
 
     // Eat all pointer traffic so the canvas underneath never sees it as an attack.
     this.root.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    this.bodyObserver = new MutationObserver(this.onBodyClass);
+    this.bodyObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
     this.syncVisibility();
     window.addEventListener("resize", this.syncVisibility);
   }
+
+  private onBodyClass = (): void => {
+    // Immersive / info hide the pad via CSS without unmounting — force-release
+    // so a held drag can't leave movement stuck under the overlay.
+    if (
+      document.body.classList.contains("immersive") ||
+      document.body.classList.contains("info-open")
+    ) {
+      this.mapMove.reset();
+      this.input.clearTouch();
+    }
+  };
 
   private syncVisibility = (): void => {
     const show = shouldShowTouchPad();
@@ -64,15 +75,14 @@ export class TouchControls {
     this.input.setTouchEnabled(show);
     if (!show) {
       this.mapMove.reset();
-      this.aimStick.reset();
       this.input.clearTouch();
     }
   };
 
   dispose(): void {
     window.removeEventListener("resize", this.syncVisibility);
+    this.bodyObserver.disconnect();
     this.mapMove.dispose();
-    this.aimStick.dispose();
     this.input.setTouchEnabled(false);
     this.input.clearTouch();
     this.root.remove();
@@ -196,12 +206,18 @@ class MapDrag {
     this.zone.addEventListener("pointermove", this.onPointerMove);
     this.zone.addEventListener("pointerup", this.onPointerUp);
     this.zone.addEventListener("pointercancel", this.onPointerUp);
+    this.zone.addEventListener("lostpointercapture", this.onLostCapture);
+    // Window fallbacks: capture can drop or the pad can be CSS-hidden mid-drag
+    // without a zone-level up, which used to leave movement stuck on.
+    window.addEventListener("pointerup", this.onWindowPointerEnd);
+    window.addEventListener("pointercancel", this.onWindowPointerEnd);
+    window.addEventListener("blur", this.reset);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
   }
 
   private onPointerDown = (e: PointerEvent): void => {
-    // Right-side aim / buttons sit above this layer and stopPropagation —
-    // but guard anyway in case events bubble from chrome.
-    if ((e.target as HTMLElement).closest(".touch-zone-right, .touch-btn")) return;
+    // Action buttons sit above this layer and stopPropagation — guard anyway.
+    if ((e.target as HTMLElement).closest(".touch-btn, .touch-actions")) return;
     if (this.pointerId !== null) return;
     e.preventDefault();
     this.pointerId = e.pointerId;
@@ -245,6 +261,20 @@ class MapDrag {
     this.reset();
   };
 
+  private onLostCapture = (e: PointerEvent): void => {
+    if (e.pointerId !== this.pointerId) return;
+    this.reset();
+  };
+
+  private onWindowPointerEnd = (e: PointerEvent): void => {
+    if (this.pointerId === null || e.pointerId !== this.pointerId) return;
+    this.reset();
+  };
+
+  private onVisibilityChange = (): void => {
+    if (document.hidden) this.reset();
+  };
+
   private placeBase(clientX: number, clientY: number): void {
     const r = this.zone.getBoundingClientRect();
     this.base.style.left = `${clientX - r.left}px`;
@@ -255,131 +285,22 @@ class MapDrag {
     this.knob.style.transform = `translate(${x}px, ${y}px)`;
   }
 
-  reset(): void {
+  reset = (): void => {
     this.pointerId = null;
     this.base.classList.remove("is-active");
     this.setKnob(0, 0);
     this.onChange(0, 0);
-  }
+  };
 
   dispose(): void {
     this.zone.removeEventListener("pointerdown", this.onPointerDown);
     this.zone.removeEventListener("pointermove", this.onPointerMove);
     this.zone.removeEventListener("pointerup", this.onPointerUp);
     this.zone.removeEventListener("pointercancel", this.onPointerUp);
-  }
-}
-
-/** Floating virtual stick: drag within a zone, spring back on release. */
-class Stick {
-  readonly root: HTMLDivElement;
-  private readonly base: HTMLDivElement;
-  private readonly knob: HTMLDivElement;
-  private readonly onChange: (x: number, y: number) => void;
-  private pointerId: number | null = null;
-  private originX = 0;
-  private originY = 0;
-  private readonly radius: number;
-
-  constructor(
-    zone: HTMLElement,
-    label: string,
-    onChange: (x: number, y: number) => void,
-    radius = 52,
-  ) {
-    this.onChange = onChange;
-    this.radius = radius;
-    this.root = document.createElement("div");
-    this.root.className = "touch-stick";
-    this.root.dataset.label = label;
-
-    this.base = document.createElement("div");
-    this.base.className = "touch-stick-base";
-    this.knob = document.createElement("div");
-    this.knob.className = "touch-stick-knob";
-    const tag = document.createElement("span");
-    tag.className = "touch-stick-tag";
-    tag.textContent = label;
-    this.base.append(this.knob, tag);
-    this.root.appendChild(this.base);
-    zone.appendChild(this.root);
-
-    zone.addEventListener("pointerdown", this.onPointerDown);
-    zone.addEventListener("pointermove", this.onPointerMove);
-    zone.addEventListener("pointerup", this.onPointerUp);
-    zone.addEventListener("pointercancel", this.onPointerUp);
-  }
-
-  private onPointerDown = (e: PointerEvent): void => {
-    // Action buttons sit inside the right zone — ignore those presses.
-    if ((e.target as HTMLElement).closest(".touch-btn")) return;
-    if (this.pointerId !== null) return;
-    e.preventDefault();
-    e.stopPropagation();
-    this.pointerId = e.pointerId;
-    this.originX = e.clientX;
-    this.originY = e.clientY;
-    this.root.classList.add("is-active");
-    this.placeBase(e.clientX, e.clientY);
-    this.setKnob(0, 0);
-    this.onChange(0, 0);
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {
-      // optional
-    }
-  };
-
-  private onPointerMove = (e: PointerEvent): void => {
-    if (e.pointerId !== this.pointerId) return;
-    e.preventDefault();
-    const dx = e.clientX - this.originX;
-    const dy = e.clientY - this.originY;
-    const len = Math.hypot(dx, dy);
-    const scale = len > this.radius ? this.radius / len : 1;
-    const kx = dx * scale;
-    const ky = dy * scale;
-    this.setKnob(kx, ky);
-    // NDC-style: x right, y up (screen y is down).
-    this.onChange(kx / this.radius, -ky / this.radius);
-  };
-
-  private onPointerUp = (e: PointerEvent): void => {
-    if (e.pointerId !== this.pointerId) return;
-    e.preventDefault();
-    this.reset();
-  };
-
-  private placeBase(clientX: number, clientY: number): void {
-    const zone = this.root.parentElement;
-    if (!zone) return;
-    const r = zone.getBoundingClientRect();
-    const x = clientX - r.left;
-    const y = clientY - r.top;
-    this.root.style.left = `${x}px`;
-    this.root.style.top = `${y}px`;
-  }
-
-  private setKnob(x: number, y: number): void {
-    this.knob.style.transform = `translate(${x}px, ${y}px)`;
-  }
-
-  reset(): void {
-    this.pointerId = null;
-    this.root.classList.remove("is-active");
-    this.setKnob(0, 0);
-    this.onChange(0, 0);
-    // Park the stick in its default corner until the next press.
-    this.root.style.left = "";
-    this.root.style.top = "";
-  }
-
-  dispose(): void {
-    const zone = this.root.parentElement;
-    if (!zone) return;
-    zone.removeEventListener("pointerdown", this.onPointerDown);
-    zone.removeEventListener("pointermove", this.onPointerMove);
-    zone.removeEventListener("pointerup", this.onPointerUp);
-    zone.removeEventListener("pointercancel", this.onPointerUp);
+    this.zone.removeEventListener("lostpointercapture", this.onLostCapture);
+    window.removeEventListener("pointerup", this.onWindowPointerEnd);
+    window.removeEventListener("pointercancel", this.onWindowPointerEnd);
+    window.removeEventListener("blur", this.reset);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
   }
 }
