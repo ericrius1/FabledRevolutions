@@ -61,7 +61,7 @@ export class Hud {
     }
     parent.appendChild(this.heartsEl);
 
-    // Shield meter under the hearts. Segment ticks hint at the ~10-hit capacity;
+    // Shield meter under the hearts. Segment ticks hint at the ~5-hit capacity;
     // the fill drains right-to-left and glows while recharging.
     this.shieldEl = document.createElement("div");
     this.shieldEl.className = "shield-meter";
@@ -157,11 +157,17 @@ export class Hud {
     }
   }
 
-  /** Roster still on the field — downed agents count until culled from the scenario. */
-  private updateEnemyCount(enemies: readonly Enemy[]): void {
-    let left = 0;
-    for (const enemy of enemies) {
-      if (!enemy.parked) left++;
+  /**
+   * Objective remaining. Prefer the scenario's `enemiesLeft` (Revolutions tallies
+   * at the slab edge); otherwise count non-parked bodies still in the roster.
+   */
+  private updateEnemyCount(enemies: readonly Enemy[], enemiesLeft?: number): void {
+    let left = enemiesLeft;
+    if (left === undefined) {
+      left = 0;
+      for (const enemy of enemies) {
+        if (!enemy.parked) left++;
+      }
     }
     if (left === this.shownEnemiesLeft) return;
     const previous = this.shownEnemiesLeft;
@@ -312,6 +318,7 @@ export class Hud {
     height: number,
     combat: Combat,
     mega: MegaSystem,
+    enemiesLeft?: number,
   ): void {
     // Project with this frame's view — matrixWorld is normally refreshed during
     // render, which runs after the HUD, so a fast follow cam leaves overlays
@@ -321,7 +328,7 @@ export class Hud {
     this.updateShield(player);
     this.updateIntro();
     this.updateEnemyBars(enemies, camera, width, height);
-    this.updateEnemyCount(enemies);
+    this.updateEnemyCount(enemies, enemiesLeft);
     this.updateKillMeter(mega);
     this.updateChargeRing(player, combat, camera, width, height);
   }

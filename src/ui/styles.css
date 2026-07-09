@@ -592,13 +592,13 @@ body.paused .pause-overlay {
     inset 0 0 0 1px rgba(120, 200, 255, 0.35),
     0 0 6px rgba(0, 0, 0, 0.5);
   overflow: hidden;
-  /* Segment ticks hint at the ~10 hits it takes to drain. */
+  /* Segment ticks hint at the ~5 hits it takes to drain. */
   background-image: repeating-linear-gradient(
     90deg,
     transparent 0,
-    transparent calc(10% - 1px),
-    rgba(4, 12, 22, 0.9) calc(10% - 1px),
-    rgba(4, 12, 22, 0.9) 10%
+    transparent calc(20% - 1px),
+    rgba(4, 12, 22, 0.9) calc(20% - 1px),
+    rgba(4, 12, 22, 0.9) 20%
   );
 }
 
@@ -2323,10 +2323,13 @@ body.info-open #app {
   }
 
   .synth-sticky-stage {
-    top: 0;
+    /* Sit below the sticky tab bar so the stage title isn't hidden under it. */
+    top: calc(max(10px, env(safe-area-inset-top)) + 44px);
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-    height: clamp(420px, calc(100dvh - 96px), 560px);
+    /* Hug content — a tall 1fr diagram row + vertical centering left a huge
+       empty band above the SVG on phones. */
+    grid-template-rows: auto auto;
+    height: auto;
     border-radius: 8px;
   }
 
@@ -2334,7 +2337,12 @@ body.info-open #app {
     padding: 10px 12px;
     border-right: 0;
     border-bottom: 1px solid rgba(52, 224, 122, 0.16);
+    /* steps are hidden on phones — keep readouts on the last real row */
     grid-template-rows: auto auto auto auto;
+  }
+
+  .synth-stage-copy .synth-readouts {
+    grid-row: 4;
   }
 
   .synth-stage-copy .info-title-tag {
@@ -2380,15 +2388,43 @@ body.info-open #app {
     min-width: 0 !important;
     width: 100%;
     height: auto;
-    max-height: 100%;
+    max-height: none;
   }
 
   .synth-sticky-stage .synth-scroll-diagram {
     overflow: hidden;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    height: auto;
     min-height: 0;
+    padding: 8px 10px 10px;
+  }
+
+  /* On phones the SVG is height:auto (no letterbox band), so an absolute
+     bottom overlay covers CONTROL AUTOMATION / LIVE OUTPUT labels. Park the
+     analyser strip under the diagram instead — collapsed until live. */
+  .synth-sticky-stage .synth-viz {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    height: 0;
+    flex: 0 0 auto;
+    margin-top: 0;
+    overflow: hidden;
+  }
+
+  .synth-sticky-stage .synth-viz.is-live {
+    height: 72px;
+    margin-top: 6px;
+  }
+
+  .synth-charge-scroll .synth-viz.is-live,
+  .synth-timerate-scroll .synth-viz.is-live {
+    height: 84px;
   }
 
   .info-diagram:not(.synth-stage-diagram) {
@@ -2669,7 +2705,7 @@ body.panel-hidden.touch-controls .social-links {
   }
 
   .synth-sticky-stage {
-    height: clamp(280px, calc(100dvh - 64px), 420px);
+    height: auto;
   }
 }
 

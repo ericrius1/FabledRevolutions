@@ -402,13 +402,16 @@ export class InfoModal {
     const ctx = canvas?.getContext("2d")
     if (!analyser || !canvas || !ctx) return
 
+    // Size after becoming live so mobile CSS (height:0 until .is-live) has
+    // already expanded the strip we draw into.
+    canvas.classList.add("is-live")
+    void canvas.offsetHeight // force layout before measuring
     const dpr = Math.min(window.devicePixelRatio, 2)
     const cssW = canvas.clientWidth || 600
-    const cssH = canvas.clientHeight || 200
+    const cssH = canvas.clientHeight || 84
     canvas.width = Math.floor(cssW * dpr)
     canvas.height = Math.floor(cssH * dpr)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    canvas.classList.add("is-live")
 
     const bins = analyser.frequencyBinCount
     const freq = new Uint8Array(bins)

@@ -14,7 +14,8 @@ import {
   smoothstep,
   uv,
   atan,
-  cameraViewMatrix
+  cameraViewMatrix,
+  select
 } from "three/tsl"
 import type ComputeNode from "three/src/nodes/gpgpu/ComputeNode.js"
 import {
@@ -36,7 +37,9 @@ import {
  * element (same index — no scatter writes, so the kernel also runs on the
  * WebGL2 transform-feedback fallback). A splash is a squashed additive ring
  * billboard that expands and fades over ~0.3s; the squash reads as a ground
- * ripple from the game's low chase camera.
+ * ripple from the game's low chase camera. Impacts outside the scenario's road
+ * footprint (player floor bounds) still respawn the drop but never light a
+ * splash — rain falls through the void past the corridor edge.
  *
  * Everything advances on clock.scaledDt, so hit-stop freezes the rain and the
  * mega bullet time slows drops and splashes for free. Streak length is scaled
@@ -139,6 +142,11 @@ export class RainEffect extends BaseEffect {
   private readonly uSeed = uniform(0)
   /** scaledDt / unscaledDt — apparent-speed factor for streak stretching. */
   private readonly uTimeK = uniform(1)
+  /** Road footprint AABB. Wide open (±1e6) when the scenario has no corridor. */
+  private readonly uFloorMinX = uniform(-1e6)
+  private readonly uFloorMaxX = uniform(1e6)
+  private readonly uFloorMinZ = uniform(-1e6)
+  private readonly uFloorMaxZ = uniform(1e6)
 
   private drops!: THREE.Sprite
   private splashes!: THREE.Sprite
@@ -191,11 +199,20 @@ export class RainEffect extends BaseEffect {
           pos.x.addAssign(this.uWind.mul(this.uDt))
 
           If(pos.y.lessThanEqual(0), () => {
-            // Impact: light the splash at the impact point, then respawn up
-            // top re-centered on the player. addAssign keeps the sub-frame
-            // overshoot so the column stays evenly distributed in y.
-            sPos.assign(vec3(pos.x, SPLASH_Y, pos.z))
-            sLife.assign(SPLASH_LIFE)
+            // Impact: splash only on the road footprint. Past the corridor edge
+            // the drop still respawns (rain falls through void) but must not
+            // leave a ripple floating in empty air. addAssign keeps the
+            // sub-frame overshoot so the column stays evenly distributed in y.
+            If(pos.x.greaterThanEqual(this.uFloorMinX), () => {
+              If(pos.x.lessThanEqual(this.uFloorMaxX), () => {
+                If(pos.z.greaterThanEqual(this.uFloorMinZ), () => {
+                  If(pos.z.lessThanEqual(this.uFloorMaxZ), () => {
+                    sPos.assign(vec3(pos.x, SPLASH_Y, pos.z))
+                    sLife.assign(SPLASH_LIFE)
+                  })
+                })
+              })
+            })
             pos.x.assign(
               hash(fi.add(this.uSeed).add(211.9))
                 .sub(0.5)
@@ -321,11 +338,20 @@ export class RainEffect extends BaseEffect {
     const d = uv().distance(vec2(0.5)).mul(2) // 0 center → 1 sprite edge
     const ring = smoothstep(0.0, 0.28, d.sub(0.68).abs()).oneMinus()
     const glint = smoothstep(0.0, 0.4, d).oneMinus().mul(lifeK)
+    // Belt-and-suspenders: never draw a ripple past the road edge even if a
+    // stale splash slot somehow still has life (e.g. after a corridor rebuild).
+    const sAt = this.splashPos.toAttribute()
+    const onRoad = sAt.x
+      .greaterThanEqual(this.uFloorMinX)
+      .and(sAt.x.lessThanEqual(this.uFloorMaxX))
+      .and(sAt.z.greaterThanEqual(this.uFloorMinZ))
+      .and(sAt.z.lessThanEqual(this.uFloorMaxZ))
     material.opacityNode = ring
       .mul(0.7)
       .add(glint.mul(0.6))
       .mul(lifeK)
       .mul(SPLASH_ALPHA)
+      .mul(select(onRoad, float(1), float(0)))
 
     const splashes = new THREE.Sprite(material)
     splashes.count = POOL
@@ -337,13 +363,27 @@ export class RainEffect extends BaseEffect {
     if (!this.enabled) return
     // SCALED time: hit-stop freezes the rain, mega bullet time slows it.
     const dt = this.ctx.clock.scaledDt
-    const p = this.ctx.getPlayer().position
+    const player = this.ctx.getPlayer()
+    const p = player.position
     this.uCenter.value.set(p.x, 0, p.z)
     this.uDt.value = dt
     this.uTimeK.value = unscaledDt > 0 ? dt / unscaledDt : 1
     // Churn the respawn seed a little each frame (irrational-ish step) so
     // respawn columns never repeat visibly. No Math.random, no allocation.
     this.uSeed.value = (this.uSeed.value + 9.173) % 8192
+
+    const floor = player.getFloorBounds()
+    if (floor) {
+      this.uFloorMinX.value = floor.minX
+      this.uFloorMaxX.value = floor.maxX
+      this.uFloorMinZ.value = floor.minZ
+      this.uFloorMaxZ.value = floor.maxZ
+    } else {
+      this.uFloorMinX.value = -1e6
+      this.uFloorMaxX.value = 1e6
+      this.uFloorMinZ.value = -1e6
+      this.uFloorMaxZ.value = 1e6
+    }
 
     if (!this.hasRun) {
       this.hasRun = true

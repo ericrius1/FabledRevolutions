@@ -524,7 +524,8 @@ async function boot(): Promise<void> {
         window.innerWidth,
         window.innerHeight,
         combat,
-        mega
+        mega,
+        scenario.enemiesLeft
       )
     }
 

@@ -5,7 +5,7 @@
  * agents for a beat and it fills back up.
  *
  * Timings (all wall-clock seconds):
- *  - `max` segments absorbed before the shield is down (~10 hits to drain).
+ *  - `max` segments absorbed before the shield is down (~5 hits to drain).
  *  - `rechargeDelay` of no damage before regen kicks in.
  *  - `rechargeTime` to refill from empty to full once regen has started.
  *  - `hitCooldown` minimum gap between drained segments, so a swarm can't empty

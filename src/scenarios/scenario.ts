@@ -28,6 +28,13 @@ export interface Scenario {
   update(scaledDt: number): void;
   /** Current scenario enemies, including temporarily downed agents. */
   readonly enemies: readonly Enemy[];
+  /**
+   * Objective counter for the HUD "enemies left" panel. When omitted, the HUD
+   * falls back to counting non-parked entries in `enemies`. Revolutions sets
+   * this to `target - eliminated` so the number drops the instant a body
+   * clears the slab — not only after it plunges out of sight.
+   */
+  readonly enemiesLeft?: number;
   dispose(): void;
   /**
    * Optional scenario-specific tuning controls (horde size, city construction

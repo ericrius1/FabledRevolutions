@@ -25,8 +25,8 @@ const AIM_DEADZONE = 0.08;
 const AIM_FULL_RADIUS = 0.4;
 const MAX_HEARTS = 5;
 const I_FRAMES = 0.8;
-/** Shield segments absorbed before hearts start dropping (~10 hits to drain). */
-const SHIELD_HITS = 10;
+/** Shield segments absorbed before hearts start dropping (~5 hits to drain). */
+const SHIELD_HITS = 5;
 /** Seconds clear of damage before the shield begins recharging. */
 const SHIELD_RECHARGE_DELAY = 3;
 /** Seconds to refill the shield from empty once recharging starts. */
@@ -199,7 +199,7 @@ export class Player {
   readonly group = new THREE.Group();
   readonly body: Body;
   readonly health = new Health(MAX_HEARTS, I_FRAMES);
-  /** Halo-style regenerating shield in front of the hearts. Drains ~10 hits,
+  /** Halo-style regenerating shield in front of the hearts. Drains ~5 hits,
    * refills after ~3s clear of the agents, taking ~3s to top off. */
   readonly shield = new Shield(SHIELD_HITS, SHIELD_RECHARGE_DELAY, SHIELD_RECHARGE_TIME);
 
@@ -603,6 +603,16 @@ export class Player {
     bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null,
   ): void {
     this.floorBounds = bounds;
+  }
+
+  /** Road footprint for effects that must not hit empty air past the street edge. */
+  getFloorBounds(): {
+    minX: number
+    maxX: number
+    minZ: number
+    maxZ: number
+  } | null {
+    return this.floorBounds
   }
 
   /** Whether the current XZ position sits over solid road (not the void). */

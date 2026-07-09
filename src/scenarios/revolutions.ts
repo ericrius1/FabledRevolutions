@@ -266,6 +266,11 @@ export class RevolutionsScenario implements Scenario {
     return this.liveEnemies
   }
 
+  /** Still-to-knock-off count — tallied at the slab edge, not at cull depth. */
+  get enemiesLeft(): number {
+    return Math.max(0, this.target - this.eliminatedTotal)
+  }
+
   get controlElement(): HTMLElement {
     return this.control
   }
@@ -703,7 +708,7 @@ export class RevolutionsScenario implements Scenario {
     this.updatePresserRelease(scaledDt)
 
     // "Enemies left" = how many still have to be knocked off to win.
-    const remaining = Math.max(0, this.target - this.eliminatedTotal)
+    const remaining = this.enemiesLeft
     if (remaining !== this.shownCount) {
       this.shownCount = remaining
       this.countLabel.textContent = `${remaining}`
