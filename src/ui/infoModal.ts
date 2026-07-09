@@ -93,7 +93,17 @@ export class InfoModal {
     // straight to another); reset scroll and move focus into the dialog for
     // keyboard users.
     this.selectTab(tab)
-    this.root.querySelector<HTMLButtonElement>(".info-close")?.focus()
+    // Prefer the visible close control: header on desktop, tab-bar on phones.
+    const closes = this.root.querySelectorAll<HTMLButtonElement>(".info-close")
+    let focused = false
+    for (const btn of closes) {
+      if (btn.offsetParent !== null) {
+        btn.focus()
+        focused = true
+        break
+      }
+    }
+    if (!focused) closes[0]?.focus()
   }
 
   close(): void {
@@ -143,6 +153,7 @@ export class InfoModal {
         <button class="info-tab" type="button" role="tab" data-tab="audio" aria-selected="false">
           <span class="info-tab-num">02</span> Audio lab
         </button>
+        <button class="info-close info-close-inline" type="button" aria-label="Close">✕</button>
       </div>
       <div class="info-body">
         <div class="info-tab-panel" role="tabpanel" data-panel="visual">
@@ -170,8 +181,8 @@ export class InfoModal {
       if (e.target === this.root || e.target === this.rainCanvas) this.close()
     })
     modal
-      .querySelector(".info-close")
-      ?.addEventListener("click", () => this.close())
+      .querySelectorAll(".info-close")
+      .forEach((btn) => btn.addEventListener("click", () => this.close()))
     modal
       .querySelector(".info-body")
       ?.addEventListener("scroll", () => this.queueSynthDiagramUpdate(), {

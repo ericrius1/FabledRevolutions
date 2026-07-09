@@ -2140,60 +2140,497 @@ body.info-open #app {
   50% { opacity: 0; }
 }
 
+.info-close-inline {
+  display: none;
+}
+
 @media (max-width: 760px) {
+  .info-overlay {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .info-modal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  /* Title block eats the phone viewport — drop it; tabs + close stay. */
   .info-header {
-    padding: 18px 18px 12px;
+    display: none;
+  }
+
+  .info-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    gap: 4px;
+    padding: 10px 12px 0;
+    padding-top: max(10px, env(safe-area-inset-top));
+    align-items: stretch;
+  }
+
+  .info-tab {
+    flex: 1;
+    justify-content: center;
+    gap: 5px;
+    padding: 10px 8px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
+
+  .info-tab-num {
+    font-size: 9px;
+  }
+
+  .info-close-inline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 40px;
+    margin-bottom: -1px;
+    padding: 0;
+    width: 40px;
+    height: auto;
+    border-radius: 7px 7px 0 0;
+    font-size: 16px;
+    letter-spacing: 0;
   }
 
   .info-body {
-    padding: 10px 18px 22px;
+    padding: 8px 14px max(20px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .info-section {
+    padding: 14px 0;
+  }
+
+  .info-section h2 {
+    font-size: 14px;
+  }
+
+  .info-section p,
+  .info-section li {
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .info-section code {
+    font-size: 11px;
   }
 
   .info-link-grid {
     grid-template-columns: 1fr;
   }
 
+  .info-link-grid a {
+    min-height: 0;
+    padding: 10px 12px;
+  }
+
+  .info-link-grid span {
+    font-size: 11px;
+  }
+
+  .info-link-grid small {
+    font-size: 10.5px;
+  }
+
   .synth-concept-list {
     grid-template-columns: 1fr;
   }
 
+  .synth-concept-list dt {
+    font-size: 11px;
+  }
+
+  .synth-concept-list dd {
+    font-size: 11px;
+  }
+
+  .info-bonus-box {
+    padding: 12px 12px;
+  }
+
+  /* Shorter scroll runway so diagrams arrive sooner; stage fills the phone. */
   .synth-sticky-scroll {
-    height: 320vh;
-    min-height: 1680px;
+    height: 240vh;
+    min-height: 1200px;
+    margin: 14px 0 18px;
   }
 
   .synth-sticky-stage {
+    top: 0;
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
-    height: clamp(520px, calc(92vh - 126px), 680px);
+    height: clamp(420px, calc(100dvh - 96px), 560px);
+    border-radius: 8px;
   }
 
   .synth-stage-copy {
-    padding: 14px;
+    padding: 10px 12px;
     border-right: 0;
     border-bottom: 1px solid rgba(52, 224, 122, 0.16);
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .synth-stage-copy .info-title-tag {
+    font-size: 8.5px;
+    letter-spacing: 0.12em;
   }
 
   .synth-stage-title {
-    margin-bottom: 10px;
-    font-size: 15px;
+    margin: 4px 0 8px;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+  }
+
+  .synth-preview-btn {
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+
+  .synth-stage-steps {
+    display: none; /* copy is enough; diagram is the star on a phone */
   }
 
   .synth-stage-line {
-    font-size: 11.5px;
-    line-height: 1.5;
+    font-size: 11px;
+    line-height: 1.45;
   }
 
   .synth-readouts {
-    margin-top: 10px;
+    margin-top: 8px;
+    gap: 6px;
+  }
+
+  .synth-readouts dt {
+    font-size: 8.5px;
   }
 
   .synth-readouts dd {
-    font-size: 13px;
+    font-size: 12px;
   }
 
+  /* Let the SVG shrink to the stage — the old min-width shoved it off-screen. */
   .synth-stage-diagram {
-    min-width: 860px;
+    min-width: 0 !important;
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+  }
+
+  .synth-sticky-stage .synth-scroll-diagram {
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+  }
+
+  .info-diagram:not(.synth-stage-diagram) {
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+
+  .fx-table {
+    min-width: 0;
+    font-size: 11px;
+  }
+
+  .fx-table th,
+  .fx-table td {
+    padding: 5px 8px 5px 0;
+  }
+
+  .info-footer {
+    font-size: 10px;
+    padding: 12px 0 4px;
+  }
+
+  .info-button {
+    left: max(10px, env(safe-area-inset-left));
+    top: auto;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    transform: none;
+    height: 36px;
+    padding: 0 12px 0 10px;
+    font-size: 10px;
+  }
+
+  .info-button .info-button-label {
+    display: none;
+  }
+
+  .info-button .info-button-glyph {
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+  }
+}
+
+/* ---- Twin-stick touch pad (phones / tablets) ---- */
+.touch-pad {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.touch-pad.is-visible {
+  display: block;
+}
+
+.touch-zone {
+  position: absolute;
+  bottom: 0;
+  width: 46%;
+  height: 42%;
+  max-height: 280px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-zone-left {
+  left: 0;
+  padding-left: max(8px, env(safe-area-inset-left));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.touch-zone-right {
+  right: 0;
+  width: 54%;
+  padding-right: max(8px, env(safe-area-inset-right));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.touch-stick {
+  position: absolute;
+  left: 28%;
+  top: 58%;
+  width: 0;
+  height: 0;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.touch-zone-right .touch-stick {
+  left: 32%;
+  top: 62%;
+}
+
+.touch-stick.is-active {
+  opacity: 1;
+}
+
+.touch-stick-base {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 118px;
+  height: 118px;
+  margin: -59px 0 0 -59px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(52, 224, 122, 0.45);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(52, 224, 122, 0.12), transparent 62%),
+    rgba(2, 12, 6, 0.35);
+  box-shadow:
+    inset 0 0 24px rgba(52, 224, 122, 0.12),
+    0 0 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.touch-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(200, 255, 221, 0.7);
+  background: rgba(52, 224, 122, 0.35);
+  box-shadow: 0 0 14px rgba(52, 224, 122, 0.45);
+  will-change: transform;
+}
+
+.touch-stick-tag {
+  position: absolute;
+  left: 50%;
+  bottom: -18px;
+  transform: translateX(-50%);
+  font: 700 9px/1 var(--mx-mono);
+  letter-spacing: 0.18em;
+  color: rgba(52, 224, 122, 0.55);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.touch-actions {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  align-items: end;
+  justify-items: end;
+  pointer-events: auto;
+  z-index: 2;
+}
+
+.touch-btn {
+  position: relative;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(52, 224, 122, 0.5);
+  background: rgba(2, 14, 7, 0.55);
+  color: var(--mx-bright);
+  font: 700 9px/1.1 var(--mx-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 0 16px rgba(52, 224, 122, 0.2);
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.08s ease, border-color 0.08s ease, background 0.08s ease,
+    box-shadow 0.08s ease;
+}
+
+.touch-btn-ring {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 1px solid rgba(52, 224, 122, 0.2);
+  pointer-events: none;
+}
+
+.touch-btn-label {
+  position: relative;
+  z-index: 1;
+  max-width: 48px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.touch-btn-attack {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 78px;
+  height: 78px;
+  align-self: center;
+  border-color: rgba(200, 255, 221, 0.65);
+  background: rgba(52, 224, 122, 0.18);
+  font-size: 10px;
+  box-shadow: 0 0 22px rgba(52, 224, 122, 0.35);
+}
+
+.touch-btn-jump {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.touch-btn-boost {
+  grid-column: 1;
+  grid-row: 1;
+  width: 54px;
+  height: 54px;
+  font-size: 8px;
+}
+
+.touch-btn.is-active,
+.touch-btn:active {
+  transform: scale(0.92);
+  border-color: var(--mx-bright);
+  background: rgba(52, 224, 122, 0.4);
+  box-shadow: 0 0 28px rgba(52, 224, 122, 0.55);
+  color: #fff;
+}
+
+/* Clear the bottom corners for the sticks; tuck chrome out of the way. */
+body.touch-controls .legend,
+body.touch-controls .sfx-volume,
+body.touch-controls .panel {
+  display: none;
+}
+
+body.touch-controls .social-links {
+  right: auto;
+  left: 50%;
+  bottom: auto;
+  top: max(12px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+}
+
+body.touch-controls .info-button {
+  top: max(12px, env(safe-area-inset-top));
+  bottom: auto;
+  left: max(10px, env(safe-area-inset-left));
+  transform: none;
+}
+
+body.touch-controls .kill-meter {
+  top: max(52px, calc(env(safe-area-inset-top) + 44px));
+}
+
+body.immersive .touch-pad,
+body.info-open .touch-pad {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.panel-hidden.touch-controls .social-links {
+  right: auto;
+}
+
+@media (max-width: 760px) and (orientation: landscape) {
+  .touch-zone {
+    height: 70%;
+    max-height: none;
+    width: 38%;
+  }
+
+  .touch-zone-right {
+    width: 42%;
+  }
+
+  .touch-btn {
+    width: 52px;
+    height: 52px;
+  }
+
+  .touch-btn-attack {
+    width: 64px;
+    height: 64px;
+  }
+
+  .touch-btn-boost {
+    width: 44px;
+    height: 44px;
+  }
+
+  .synth-sticky-stage {
+    height: clamp(280px, calc(100dvh - 64px), 420px);
   }
 }
 

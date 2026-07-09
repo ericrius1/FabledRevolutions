@@ -1,7 +1,7 @@
 import * as THREE from "three/webgpu";
 
 /** Which control scheme the player last used. Drives the on-screen legend. */
-export type InputSource = "kbm" | "gamepad";
+export type InputSource = "kbm" | "gamepad" | "touch";
 
 /** Per-action "is this input engaged right now" flags for the legend. */
 export interface InputActivity {
@@ -70,6 +70,16 @@ export class Input {
   private prevPanelDown = false;
   private prevInfoModalDown = false;
 
+  // Virtual touch pad (phones / tablets). Written by TouchControls.
+  private touchEnabled = false;
+  private touchMoveX = 0;
+  private touchMoveY = 0;
+  private touchAimX = 0;
+  private touchAimY = 0;
+  private touchAttackDown = false;
+  private touchBoostDown = false;
+  private touchJumpDown = false;
+
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly aimPoint = new THREE.Vector3();
@@ -82,6 +92,70 @@ export class Input {
     // Release listens on window so dragging off the canvas still ends a charge.
     window.addEventListener("pointerup", this.onPointerUp);
     domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  /** Mount / unmount the on-screen pad. When enabled, canvas taps don't attack. */
+  setTouchEnabled(enabled: boolean): void {
+    this.touchEnabled = enabled;
+    if (!enabled) this.clearTouch();
+  }
+
+  setTouchMove(x: number, y: number): void {
+    this.touchMoveX = x;
+    this.touchMoveY = y;
+    if (x !== 0 || y !== 0) this.source = "touch";
+  }
+
+  setTouchAim(x: number, y: number): void {
+    this.touchAimX = x;
+    this.touchAimY = y;
+    if (x !== 0 || y !== 0) {
+      this.source = "touch";
+      this.lookTimer = LOOK_DECAY;
+    }
+  }
+
+  setTouchAttack(down: boolean): void {
+    if (!this.gameplayEnabled) return;
+    if (down && !this.touchAttackDown) {
+      this.attackQueued = true;
+      this.attackFlash = FLASH_TIME;
+      this.source = "touch";
+    }
+    if (!down && this.touchAttackDown) this.releaseQueued = true;
+    this.touchAttackDown = down;
+    this.attackHeldNow =
+      this.gameplayEnabled && (this.mouseAttackDown || this.touchAttackDown);
+  }
+
+  setTouchBoost(down: boolean): void {
+    this.touchBoostDown = down;
+    if (down) this.source = "touch";
+  }
+
+  /** Rising edge of the jump button. */
+  pulseTouchJump(): void {
+    if (!this.touchJumpDown) {
+      this.jumpQueued = true;
+      this.source = "touch";
+    }
+    this.touchJumpDown = true;
+  }
+
+  /** Falling edge of the jump button (dive smash). */
+  releaseTouchJump(): void {
+    if (this.touchJumpDown) this.jumpReleaseQueued = true;
+    this.touchJumpDown = false;
+  }
+
+  clearTouch(): void {
+    if (this.touchAttackDown) this.releaseQueued = true;
+    if (this.touchJumpDown) this.jumpReleaseQueued = true;
+    this.touchMoveX = this.touchMoveY = 0;
+    this.touchAimX = this.touchAimY = 0;
+    this.touchAttackDown = false;
+    this.touchBoostDown = false;
+    this.touchJumpDown = false;
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -108,6 +182,9 @@ export class Input {
   };
 
   private onPointerMove = (e: PointerEvent): void => {
+    // Touch pad owns look/move on phones — don't let canvas finger-drags flip
+    // the active source back to kbm and drop the virtual sticks.
+    if (this.touchEnabled && e.pointerType === "touch") return;
     const rect = this.domElement.getBoundingClientRect();
     this.pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -118,6 +195,9 @@ export class Input {
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
     if (!this.gameplayEnabled) return;
+    // On touch devices the virtual pad owns attack — a bare canvas tap would
+    // fire swings under the sticks and fight the twin-stick layout.
+    if (this.touchEnabled && e.pointerType === "touch") return;
     try {
       this.domElement.setPointerCapture(e.pointerId);
     } catch {
@@ -159,7 +239,8 @@ export class Input {
       this.prevPanelDown = false;
       this.prevInfoModalDown = false;
       this.sprintPadHeld = false;
-      this.attackHeldNow = this.gameplayEnabled && this.mouseAttackDown;
+      this.attackHeldNow =
+        this.gameplayEnabled && (this.mouseAttackDown || this.touchAttackDown);
       return;
     }
 
@@ -203,7 +284,9 @@ export class Input {
 
     if (infoModalDown && !this.prevInfoModalDown) this.infoModalToggleQueued = true;
     this.prevInfoModalDown = infoModalDown;
-    this.attackHeldNow = this.gameplayEnabled && (attackDown || this.mouseAttackDown);
+    this.attackHeldNow =
+      this.gameplayEnabled &&
+      (attackDown || this.mouseAttackDown || this.touchAttackDown);
     if (this.rx !== 0 || this.ry !== 0) this.lookTimer = LOOK_DECAY;
   }
 
@@ -213,8 +296,13 @@ export class Input {
     return null;
   }
 
-  /** WASD / left-stick -> a 2D vector in camera space (x right, y forward). */
+  /** WASD / left-stick / touch stick -> a 2D vector in camera space (x right, y forward). */
   moveAxis(out: THREE.Vector2): THREE.Vector2 {
+    if (this.source === "touch" && (this.touchMoveX !== 0 || this.touchMoveY !== 0)) {
+      out.set(this.touchMoveX, this.touchMoveY);
+      if (out.lengthSq() > 1) out.normalize();
+      return out;
+    }
     if (this.source === "gamepad" && (this.lx !== 0 || this.ly !== 0)) {
       out.set(this.lx, -this.ly); // stick up (-y) = forward
       if (out.lengthSq() > 1) out.normalize();
@@ -232,11 +320,15 @@ export class Input {
   }
 
   /**
-   * Right-stick aim as a camera-space vector (x right, y forward), or null when
-   * the stick is centered / not the active source. When null, callers should
-   * fall back to cursor aim via {@link aimGroundPoint}.
+   * Right-stick / touch-aim as a camera-space vector (x right, y forward), or
+   * null when centered / not the active source. When null, callers should fall
+   * back to cursor aim via {@link aimGroundPoint}.
    */
   aimStick(out: THREE.Vector2): THREE.Vector2 | null {
+    if (this.source === "touch" && (this.touchAimX !== 0 || this.touchAimY !== 0)) {
+      out.set(this.touchAimX, this.touchAimY);
+      return out;
+    }
     if (this.source !== "gamepad" || (this.rx === 0 && this.ry === 0)) return null;
     out.set(this.rx, -this.ry);
     return out;
@@ -266,8 +358,9 @@ export class Input {
     this.gameplayEnabled = enabled;
     if (!enabled) {
       this.attackQueued = false;
-      if (this.mouseAttackDown) this.releaseQueued = true;
+      if (this.mouseAttackDown || this.touchAttackDown) this.releaseQueued = true;
       this.mouseAttackDown = false;
+      this.touchAttackDown = false;
       this.attackHeldNow = false;
     }
   }
@@ -340,12 +433,13 @@ export class Input {
     return this.gameplayEnabled && this.attackQueued;
   }
 
-  /** True while sprint is held (Shift / LB / RB / LT) — boosts ground move speed. */
+  /** True while sprint is held (Shift / LB / RB / LT / touch BOOST). */
   get sprintHeld(): boolean {
     return (
       this.keys.has("ShiftLeft") ||
       this.keys.has("ShiftRight") ||
-      this.sprintPadHeld
+      this.sprintPadHeld ||
+      this.touchBoostDown
     );
   }
 
@@ -361,20 +455,22 @@ export class Input {
   /** Which actions are engaged right now, for legend highlighting. */
   activity(): InputActivity {
     const moving =
-      this.source === "gamepad"
-        ? this.lx !== 0 || this.ly !== 0
-        : this.keys.has("KeyW") ||
-          this.keys.has("KeyA") ||
-          this.keys.has("KeyS") ||
-          this.keys.has("KeyD") ||
-          this.keys.has("ArrowUp") ||
-          this.keys.has("ArrowDown") ||
-          this.keys.has("ArrowLeft") ||
-          this.keys.has("ArrowRight");
+      this.source === "touch"
+        ? this.touchMoveX !== 0 || this.touchMoveY !== 0
+        : this.source === "gamepad"
+          ? this.lx !== 0 || this.ly !== 0
+          : this.keys.has("KeyW") ||
+            this.keys.has("KeyA") ||
+            this.keys.has("KeyS") ||
+            this.keys.has("KeyD") ||
+            this.keys.has("ArrowUp") ||
+            this.keys.has("ArrowDown") ||
+            this.keys.has("ArrowLeft") ||
+            this.keys.has("ArrowRight");
     return {
       move: moving,
       look: this.lookTimer > 0,
-      attack: this.attackFlash > 0,
+      attack: this.attackFlash > 0 || this.touchAttackDown,
       boost: this.sprintHeld,
     };
   }

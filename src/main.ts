@@ -39,6 +39,7 @@ import { Panel } from "./ui/panel"
 import { Hud } from "./ui/hud"
 import { Legend } from "./ui/legend"
 import { InfoModal } from "./ui/infoModal"
+import { TouchControls } from "./ui/touchControls"
 import { SocialLinks } from "./ui/socialLinks"
 import { SfxVolume } from "./ui/sfxVolume"
 
@@ -184,6 +185,8 @@ async function boot(): Promise<void> {
     renderer.domElement
   )
   const input = new Input(renderer.domElement)
+  const touchControls = new TouchControls(input)
+  document.body.appendChild(touchControls.root)
 
   // Player is created once and reused across scenario switches.
   const player = new Player(physics, new THREE.Vector2(0, 0), bus)

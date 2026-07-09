@@ -21,6 +21,12 @@ const LABELS: Record<InputSource, Record<Action, RowLabels>> = {
     attack: { title: "ATTACK", value: "RT · HOLD TO CHARGE" },
     boost: { title: "BOOST", value: "LB · RB · LT" },
   },
+  touch: {
+    move: { title: "MOVE", value: "LEFT STICK" },
+    look: { title: "AIM", value: "RIGHT STICK" },
+    attack: { title: "ATTACK", value: "HOLD TO CHARGE" },
+    boost: { title: "BOOST", value: "BOOST BTN" },
+  },
 };
 
 const ACTIONS: Action[] = ["move", "look", "attack", "boost"];
@@ -35,6 +41,10 @@ const HOTKEY_ROWS: Record<InputSource, { title: string; value: string }[]> = {
   gamepad: [
     { title: "INFO", value: "START" },
     { title: "PANEL", value: "SELECT" },
+  ],
+  touch: [
+    { title: "JUMP", value: "JUMP BTN · HOLD IN AIR TO DIVE" },
+    { title: "INFO", value: "BEHIND THE SCENES" },
   ],
 };
 
