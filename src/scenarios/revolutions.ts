@@ -48,8 +48,12 @@ const SLOT_SPACING = 2.55
 const FACADE_INSET = 1.05
 /** Hard ceiling on vertical stacks (ground + ledges); the slider clamps here. */
 const MAX_STACKS = 5
-const UPPER_STACK_TUCK = 0.75
+/** How far upper ranks tuck toward the facade vs ground inset. Kept modest so
+ * capsule feet stay clear of the wall mesh (radius 0.5) instead of clipping in. */
+const UPPER_STACK_TUCK = 0.35
 const UPPER_STACK_Z_STAGGER = SLOT_SPACING * 0.58
+/** Lift balcony agents this far above deck top so feet don't z-fight the deck. */
+const LEDGE_STAND_CLEARANCE = 0.05
 /** Minimum balcony deck depth (m). */
 const LEDGE_DEPTH = 0.82
 const LEDGE_THICKNESS = 0.18
@@ -473,7 +477,8 @@ export class RevolutionsScenario implements Scenario {
 
   private stackInset(stack: number): number {
     if (stack === 0) return FACADE_INSET
-    return Math.max(0.42, FACADE_INSET - UPPER_STACK_TUCK)
+    // ≥ agent radius + slack so the silhouette clears the facade face.
+    return Math.max(0.65, FACADE_INSET - UPPER_STACK_TUCK)
   }
 
   /**
@@ -798,10 +803,11 @@ export class RevolutionsScenario implements Scenario {
   private spawnRanked(slot: Slot, opening = false): void {
     // Upper tiers (balcony/rail) may spawn perched knife snipers; the ground
     // ranks get the street role split (they later peel off as pressers).
-    const perched = slot.stack >= 1 && Math.random() < PERCHED_THROWER_FRACTION
+    const onLedge = slot.stack >= 1
+    const perched = onLedge && Math.random() < PERCHED_THROWER_FRACTION
     const role: EnemyRole = perched
       ? "thrower"
-      : slot.stack >= 1
+      : onLedge
         ? "chaser"
         : pickGroundRole()
     const enemy = new Enemy(
@@ -823,16 +829,21 @@ export class RevolutionsScenario implements Scenario {
     this.ctx.scene.add(enemy.group)
     this.liveEnemies.push(enemy)
     this.spawnedTotal++
+    // Stand a hair above the deck top so agent feet don't z-fight the balcony.
+    const standY = onLedge ? slot.y + LEDGE_STAND_CLEARANCE : slot.y
     this.beginArrival(
       enemy,
-      slot.y,
+      standY,
       opening ? this.openingArrivalDelay(slot) : 0,
       slot.holdPosition,
       FLY_IN_DURATION
     )
-    // A rail sniper stays on its ledge with no street-level collider — it's up
-    // on the railing, not a phantom body against the facade.
-    if (perched) enemy.setRankDecorative(true)
+    // Every upper-tier agent is presentation-only while held: physics stays on
+    // the street lane, and a Ground collision mask would shove the capsule into
+    // the facade every frame (snapHoldLane vs solver) — the balcony flicker.
+    // Rail snipers and idle ledge crowd alike; stagger/dropFromPerch still lifts
+    // the body to mesh height when a shock knocks them loose.
+    if (onLedge) enemy.setRankDecorative(true)
     this.syncEnemyPresentation(enemy)
   }
 

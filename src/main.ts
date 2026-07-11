@@ -58,10 +58,10 @@ const SHOCK_WAVE_SPIN = 4
 const SHOCK_WAVE_LIGHTNING_SCALE = 0.6
 /** Above this strength the wave blows even scenario-held rank agents loose. */
 const SHOCK_WAVE_UNLOCK_STRENGTH = 0.5
-/** Below this body height the player is dead and the round restarts. Set deep so
- * a miss off the edge is a long ~100 m plunge into the void before the reset,
- * not an instant blink out at the floor line. */
-const PLAYER_FALL_DEATH_Y = -100
+/** Below this body height the player is dead and the round restarts. Deep enough
+ * for a short visible plunge off the street edge, short enough that a miss
+ * doesn't strand you staring into the void. */
+const PLAYER_FALL_DEATH_Y = -12
 
 /** Dossier tabs that a shared link may deep-link into (see infoModal.ts). */
 const INFO_TABS = ["visual", "audio"] as const

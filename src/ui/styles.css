@@ -1451,8 +1451,8 @@ body.info-open #app {
   position: sticky;
   top: 10px;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  height: clamp(520px, calc(94vh - 150px), 680px);
+  grid-template-columns: 288px minmax(0, 1fr);
+  height: clamp(580px, calc(94vh - 120px), 740px);
   border: 1px solid rgba(52, 224, 122, 0.24);
   border-radius: 10px;
   background:
@@ -1466,11 +1466,13 @@ body.info-open #app {
 
 .synth-stage-copy {
   min-width: 0;
+  min-height: 0; /* shrink inside fixed stage so steps can scroll, not clip */
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   padding: 18px 16px;
   border-right: 1px solid rgba(52, 224, 122, 0.16);
   background: rgba(0, 14, 6, 0.36);
+  overflow: hidden;
 }
 
 .synth-stage-copy .info-title-tag {
@@ -1563,6 +1565,10 @@ body.info-open #app {
   align-content: start;
   gap: 7px;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--mx-green-dim) transparent;
 }
 
 .synth-stage-line {
@@ -1572,7 +1578,7 @@ body.info-open #app {
   border-radius: 6px;
   background: rgba(0, 24, 10, 0.28);
   color: #c2e8d1;
-  font: 400 10.5px/1.38 var(--mx-mono);
+  font: 400 10.5px/1.42 var(--mx-mono);
   transition: border-color 0.12s linear, opacity 0.12s linear, box-shadow 0.12s linear;
 }
 

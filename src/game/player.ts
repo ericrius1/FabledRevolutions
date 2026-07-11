@@ -710,11 +710,19 @@ export class Player {
     dt: number,
     physicalVy = vy,
   ): boolean {
+    const feetY = bodyY - PLAYER_HEIGHT / 2;
+    // Once you've dropped below the street, never treat contact as grounded —
+    // the slab's vertical face / underside used to "catch" a fall off the map
+    // and freeze you in the void with vy zeroed, so the fall-death restart
+    // never fired.
+    if (feetY < -GROUND_EPS) return false;
+
     // The y=0 road only holds you up where there's actually road. Off its edge
     // the feet find nothing and you keep falling. Rooftop landings still ground
     // via the physics-contact `blocked` branch below, so this only gates the
     // flat street plane, not the buildings.
-    const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS && this.isOverFloor();
+    const overFloor = this.isOverFloor();
+    const onFloor = bodyY <= PLAYER_HEIGHT / 2 + GROUND_EPS && overFloor;
     const wantedDrop = Math.max(0, -vy) * dt;
     const actualDrop = this.prevY - bodyY;
     const blocked =
@@ -722,7 +730,11 @@ export class Player {
       physicalVy > -0.2 &&
       actualDrop >= 0 &&
       actualDrop < wantedDrop * 0.4;
-    return (onFloor || blocked) && vy <= 0.01;
+    // Elevated contact (rooftops) only while still over the road footprint.
+    // Scraping the slab's vertical face after walking off the back/side must
+    // not count as a landing — that was the "stuck underneath" soft-lock.
+    const onSupport = blocked && overFloor;
+    return (onFloor || onSupport) && vy <= 0.01;
   }
 
   /** Standing still on a walkable surface — the only state that may spin. */
